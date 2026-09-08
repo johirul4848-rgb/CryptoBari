@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and account balances",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "name": { "type": "string", "maxLength": 128 },
+        "country": { "type": "string", "maxLength": 64 },
+        "liveBalance": { "type": "number" },
+        "demoBalance": { "type": "number" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "kycStatus": { "type": "string", "enum": ["UNVERIFIED", "PENDING", "VERIFIED"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "email", "name"]
+    },
+    "DepositRequest": {
+      "title": "DepositRequest",
+      "description": "User deposit requests requiring admin approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 16 },
+        "method": { "type": "string", "maxLength": 64 },
+        "txHash": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "createdAt": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "rejectedReason": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["id", "userId", "amount", "method", "status", "createdAt"]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "User withdrawal requests requiring admin payout processing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "maxLength": 64 },
+        "address": { "type": "string", "maxLength": 256 },
+        "network": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "createdAt": { "type": "string" },
+        "processedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "amount", "address", "status", "createdAt"]
+    },
+    "Notice": {
+      "title": "Notice",
+      "description": "Broker platform notices and system announcements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "content": { "type": "string", "maxLength": 1000 },
+        "type": { "type": "string", "enum": ["INFO", "PROMO", "ALERT"] },
+        "active": { "type": "boolean" },
+        "priority": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "content", "type", "active", "createdAt"]
+    },
+    "TradeLog": {
+      "title": "TradeLog",
+      "description": "Record of binary options trade placed by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 32 },
+        "direction": { "type": "string", "enum": ["UP", "DOWN"] },
+        "investment": { "type": "number" },
+        "payoutRate": { "type": "number" },
+        "profit": { "type": "number" },
+        "result": { "type": "string", "enum": ["WIN", "LOSS", "TIE", "PENDING"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "SETTLED", "CANCELLED"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "symbol", "direction", "investment", "result", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile with balance records"
+    },
+    "/deposit_requests/{requestId}": {
+      "schema": "DepositRequest",
+      "description": "Pending and processed deposit approval requests"
+    },
+    "/withdrawal_requests/{requestId}": {
+      "schema": "WithdrawalRequest",
+      "description": "Pending and processed withdrawal payout requests"
+    },
+    "/notices/{noticeId}": {
+      "schema": "Notice",
+      "description": "Live broker system announcements broadcast to all clients"
+    },
+    "/trades/{tradeId}": {
+      "schema": "TradeLog",
+      "description": "Historic trade settlement records"
+    }
+  }
+}

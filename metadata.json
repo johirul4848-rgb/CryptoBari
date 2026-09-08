@@ -1,0 +1,7 @@
+{
+  "name": "CryptoBari - Binary Options Trading Platform",
+  "description": "Professional fintech binary options trading terminal powered by real-time Binance market data feeds, high-performance candlestick charts, and fair server-side trade execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
