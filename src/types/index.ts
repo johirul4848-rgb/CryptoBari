@@ -77,20 +77,24 @@ export interface UserProfile {
   name: string;
   avatarUrl?: string;
   role: 'USER' | 'ADMIN' | 'SUPPORT';
-  isVerified: boolean;
-  accountMode: AccountMode;
-  createdAt: string;
+  isVerified?: boolean;
+  kycStatus?: string;
+  twoFactorEnabled?: boolean;
+  accountMode?: AccountMode;
+  createdAt: string | number;
+  country?: string;
 }
 
 export interface Transaction {
   id: string;
-  userId: string;
-  accountMode: AccountMode;
+  userId?: string;
+  accountMode?: AccountMode;
   type: 'DEPOSIT' | 'WITHDRAWAL' | 'TRADE' | 'PAYOUT' | 'REFUND';
   amount: number;
   status: 'COMPLETED' | 'PENDING' | 'REJECTED';
   description: string;
   timestamp: number;
+  currency?: string;
 }
 
 export interface NotificationItem {
@@ -130,11 +134,13 @@ export interface AdminStats {
 
 export interface DrawingToolItem {
   id: string;
-  type: 'horizontal_line' | 'trend_line';
+  type: 'horizontal_line' | 'trend_line' | 'fibonacci';
   price: number;
   color: string;
   label?: string;
   lineWidth?: number;
+  highPrice?: number;
+  lowPrice?: number;
 }
 
 export interface IndicatorSettings {
@@ -144,3 +150,5 @@ export interface IndicatorSettings {
   rsi: { enabled: boolean; period: number; overbought: number; oversold: number };
   macd: { enabled: boolean; fast: number; slow: number; signal: number };
 }
+
+export type NavTab = 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing' | 'deposit' | 'withdrawal' | 'profile';

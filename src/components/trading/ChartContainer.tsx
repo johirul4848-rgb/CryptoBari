@@ -37,10 +37,13 @@ import {
   Radio,
   AlertTriangle,
   ChevronDown,
+  Grid,
+  Check,
 } from 'lucide-react';
 import { TradeMarkersOverlay } from './TradeMarkersOverlay';
 import { IndicatorsAndToolsMenu } from './IndicatorsAndToolsMenu';
-import { calculateSMA, calculateEMA, calculateBollingerBands, calculateRSI } from '../../utils/indicators';
+import { UtcTimeSelector } from './UtcTimeSelector';
+import { calculateSMA, calculateEMA, calculateBollingerBands, calculateRSI, calculateMACD } from '../../utils/indicators';
 
 interface ChartContainerProps {
   symbol: MarketSymbol;
@@ -116,6 +119,79 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
   });
   const [currentRsiValue, setCurrentRsiValue] = useState<number | null>(null);
+  const [currentMacdValue, setCurrentMacdValue] = useState<{
+    macdLine: number;
+    signalLine: number;
+    histogram: number;
+    trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  } | null>(null);
+
+  // Indicators ref for stable, non-disruptive chart series updates
+  const indicatorsRef = useRef<IndicatorSettings>(indicators);
+  useEffect(() => {
+    indicatorsRef.current = indicators;
+  }, [indicators]);
+
+  // Chart Background Grid Function State ('crisp' | 'dense' | 'dotted' | 'off')
+  type ChartGridMode = 'crisp' | 'dense' | 'dotted' | 'off';
+  const [gridMode, setGridMode] = useState<ChartGridMode>('crisp');
+  const [isGridDropdownOpen, setIsGridDropdownOpen] = useState(false);
+  const gridDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close grid dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (gridDropdownRef.current && !gridDropdownRef.current.contains(e.target as Node)) {
+        setIsGridDropdownOpen(false);
+      }
+    };
+    if (isGridDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isGridDropdownOpen]);
+
+  // Helper to get grid styling configuration for lightweight-charts
+  const getGridOptions = useCallback((mode: ChartGridMode) => {
+    switch (mode) {
+      case 'crisp':
+        // High visibility dashed grid for technical analysis & key price level alignments
+        return {
+          vertLines: { color: 'rgba(71, 85, 105, 0.45)', style: LineStyle.Dashed },
+          horzLines: { color: 'rgba(71, 85, 105, 0.45)', style: LineStyle.Dashed },
+        };
+      case 'dense':
+        // Solid high-precision scalping grid
+        return {
+          vertLines: { color: 'rgba(100, 116, 139, 0.4)', style: LineStyle.Solid },
+          horzLines: { color: 'rgba(100, 116, 139, 0.4)', style: LineStyle.Solid },
+        };
+      case 'dotted':
+        // Classic Quotex dotted grid
+        return {
+          vertLines: { color: 'rgba(71, 85, 105, 0.45)', style: LineStyle.Dotted },
+          horzLines: { color: 'rgba(71, 85, 105, 0.45)', style: LineStyle.Dotted },
+        };
+      case 'off':
+        // Clean dark canvas without grid lines
+        return {
+          vertLines: { color: 'rgba(0, 0, 0, 0)', style: LineStyle.Solid },
+          horzLines: { color: 'rgba(0, 0, 0, 0)', style: LineStyle.Solid },
+        };
+    }
+  }, []);
+
+  // Update chart grid dynamically when trader changes grid mode
+  useEffect(() => {
+    if (!chartRef.current) return;
+    try {
+      chartRef.current.applyOptions({
+        grid: getGridOptions(gridMode),
+      });
+    } catch (e) {
+      console.warn('Failed to update chart grid options:', e);
+    }
+  }, [gridMode, getGridOptions]);
 
   // Real-time market metrics & trade stream
   const [livePrice, setLivePrice] = useState<number>(symbol.price || externalCurrentPrice || 0);
@@ -165,28 +241,41 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
 
   // Update indicators logic on chart with comprehensive error boundaries and data validation
   const updateAllIndicators = useCallback(() => {
-    if (!chartRef.current || candlesHistoryRef.current.length === 0) return;
+    if (!chartRef.current || candlesHistoryRef.current.length < 5) return;
     const candles = candlesHistoryRef.current;
+    const currentInd = indicatorsRef.current;
 
     try {
-      // 1. SMA
-      if (indicators.sma.enabled) {
+      // 1. SMA (Simple Moving Average)
+      if (currentInd.sma.enabled && chartRef.current) {
         if (!smaSeriesRef.current) {
-          smaSeriesRef.current = chartRef.current.addSeries(LineSeries, {
-            color: indicators.sma.color,
-            lineWidth: 2,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-          });
+          try {
+            smaSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.sma.color || '#f59e0b',
+              lineWidth: 2,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+          } catch (e) {
+            console.warn('Failed to add SMA series:', e);
+          }
         }
-        const smaData = calculateSMA(candles, indicators.sma.period);
+        const smaData = calculateSMA(candles, currentInd.sma.period || 20);
         if (smaSeriesRef.current && smaData.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          smaSeriesRef.current.setData(smaData as any);
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            smaSeriesRef.current.setData(smaData as any);
+          } catch (e) {
+            console.warn('SMA setData error:', e);
+          }
         }
-      } else if (smaSeriesRef.current) {
-        chartRef.current.removeSeries(smaSeriesRef.current);
+      } else if (smaSeriesRef.current && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(smaSeriesRef.current);
+        } catch (e) {
+          console.warn('SMA remove error:', e);
+        }
         smaSeriesRef.current = null;
       }
     } catch (err) {
@@ -194,24 +283,36 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     }
 
     try {
-      // 2. EMA
-      if (indicators.ema.enabled) {
+      // 2. EMA (Exponential Moving Average)
+      if (currentInd.ema.enabled && chartRef.current) {
         if (!emaSeriesRef.current) {
-          emaSeriesRef.current = chartRef.current.addSeries(LineSeries, {
-            color: indicators.ema.color,
-            lineWidth: 2,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-          });
+          try {
+            emaSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.ema.color || '#06b6d4',
+              lineWidth: 2,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+          } catch (e) {
+            console.warn('Failed to add EMA series:', e);
+          }
         }
-        const emaData = calculateEMA(candles, indicators.ema.period);
+        const emaData = calculateEMA(candles, currentInd.ema.period || 14);
         if (emaSeriesRef.current && emaData.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          emaSeriesRef.current.setData(emaData as any);
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            emaSeriesRef.current.setData(emaData as any);
+          } catch (e) {
+            console.warn('EMA setData error:', e);
+          }
         }
-      } else if (emaSeriesRef.current) {
-        chartRef.current.removeSeries(emaSeriesRef.current);
+      } else if (emaSeriesRef.current && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(emaSeriesRef.current);
+        } catch (e) {
+          console.warn('EMA remove error:', e);
+        }
         emaSeriesRef.current = null;
       }
     } catch (err) {
@@ -219,46 +320,62 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     }
 
     try {
-      // 3. Bollinger Bands
-      if (indicators.bollinger.enabled) {
+      // 3. Bollinger Bands (Upper, Middle, Lower)
+      if (currentInd.bollinger.enabled && chartRef.current) {
         if (!bbUpperSeriesRef.current) {
-          bbUpperSeriesRef.current = chartRef.current.addSeries(LineSeries, {
-            color: indicators.bollinger.color,
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-          });
-          bbMiddleSeriesRef.current = chartRef.current.addSeries(LineSeries, {
-            color: indicators.bollinger.color,
-            lineWidth: 2,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-          });
-          bbLowerSeriesRef.current = chartRef.current.addSeries(LineSeries, {
-            color: indicators.bollinger.color,
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-          });
+          try {
+            bbUpperSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.bollinger.color || '#a855f7',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+            bbMiddleSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.bollinger.color || '#a855f7',
+              lineWidth: 2,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+            bbLowerSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.bollinger.color || '#a855f7',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+          } catch (e) {
+            console.warn('Failed to add Bollinger series:', e);
+          }
         }
-        const bb = calculateBollingerBands(candles, indicators.bollinger.period, indicators.bollinger.stdDev);
-        if (bb.upper.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          bbUpperSeriesRef.current?.setData(bb.upper as any);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          bbMiddleSeriesRef.current?.setData(bb.middle as any);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          bbLowerSeriesRef.current?.setData(bb.lower as any);
+        const bb = calculateBollingerBands(
+          candles,
+          currentInd.bollinger.period || 20,
+          currentInd.bollinger.stdDev || 2.0
+        );
+        if (bb.upper.length > 0 && bbUpperSeriesRef.current) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bbUpperSeriesRef.current?.setData(bb.upper as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bbMiddleSeriesRef.current?.setData(bb.middle as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            bbLowerSeriesRef.current?.setData(bb.lower as any);
+          } catch (e) {
+            console.warn('Bollinger setData error:', e);
+          }
         }
-      } else if (bbUpperSeriesRef.current) {
-        if (bbUpperSeriesRef.current) chartRef.current.removeSeries(bbUpperSeriesRef.current);
-        if (bbMiddleSeriesRef.current) chartRef.current.removeSeries(bbMiddleSeriesRef.current);
-        if (bbLowerSeriesRef.current) chartRef.current.removeSeries(bbLowerSeriesRef.current);
+      } else if (bbUpperSeriesRef.current && chartRef.current) {
+        try {
+          if (bbUpperSeriesRef.current) chartRef.current.removeSeries(bbUpperSeriesRef.current);
+          if (bbMiddleSeriesRef.current) chartRef.current.removeSeries(bbMiddleSeriesRef.current);
+          if (bbLowerSeriesRef.current) chartRef.current.removeSeries(bbLowerSeriesRef.current);
+        } catch (e) {
+          console.warn('Bollinger remove error:', e);
+        }
         bbUpperSeriesRef.current = null;
         bbMiddleSeriesRef.current = null;
         bbLowerSeriesRef.current = null;
@@ -269,8 +386,8 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
 
     try {
       // 4. RSI Calculation
-      if (indicators.rsi.enabled) {
-        const rsiResult = calculateRSI(candles, indicators.rsi.period);
+      if (currentInd.rsi.enabled) {
+        const rsiResult = calculateRSI(candles, currentInd.rsi.period || 14);
         setCurrentRsiValue(Number(rsiResult.latestRSI.toFixed(1)));
       } else {
         setCurrentRsiValue(null);
@@ -278,7 +395,24 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     } catch (err) {
       console.warn('RSI calculation handled:', err);
     }
-  }, [indicators]);
+
+    try {
+      // 5. MACD Calculation
+      if (currentInd.macd?.enabled) {
+        const macdResult = calculateMACD(
+          candles,
+          currentInd.macd.fast || 12,
+          currentInd.macd.slow || 26,
+          currentInd.macd.signal || 9
+        );
+        setCurrentMacdValue(macdResult);
+      } else {
+        setCurrentMacdValue(null);
+      }
+    } catch (err) {
+      console.warn('MACD calculation handled:', err);
+    }
+  }, []);
 
   // Supported timeframes
   const allTimeframes: Timeframe[] = [
@@ -303,11 +437,20 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Remove any previous instance
+    // Remove any previous instance safely
     if (chartRef.current) {
-      chartRef.current.remove();
+      try {
+        chartRef.current.remove();
+      } catch (e) {
+        console.warn('Chart remove warning:', e);
+      }
       chartRef.current = null;
       seriesRef.current = null;
+      smaSeriesRef.current = null;
+      emaSeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbMiddleSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
       priceLinesRef.current.clear();
     }
 
@@ -324,10 +467,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
         fontFamily: 'Plus Jakarta Sans, sans-serif',
         attributionLogo: false,
       },
-      grid: {
-        vertLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted },
-        horzLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted },
-      },
+      grid: getGridOptions(gridMode),
       crosshair: {
         vertLine: {
           color: '#3b82f6',
@@ -463,7 +603,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
         bbLowerSeriesRef.current = null;
       }
     };
-  }, [symbol.symbol, timeframe, chartType, symbol.pricePrecision, symbol.tickSize, updateAllIndicators]);
+  }, [symbol.symbol, timeframe, chartType, symbol.pricePrecision, symbol.tickSize]);
 
   // Re-run indicators whenever settings change
   useEffect(() => {
@@ -680,12 +820,6 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
               )}
               {is24hPositive ? `+${symbol.priceChangePercent.toFixed(2)}%` : `${symbol.priceChangePercent.toFixed(2)}%`}
             </div>
-
-            {/* Time Format Clock placed right to the right side of price movement */}
-            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-[#131a29] border border-slate-700/60 text-slate-300 font-mono text-xs shadow-inner">
-              <Clock className="w-3 h-3 text-amber-400 shrink-0" />
-              <span className="tracking-wide font-medium">{clockTime}</span>
-            </div>
           </div>
         </div>
 
@@ -831,8 +965,77 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
             onDeleteDrawingTool={handleDeleteDrawingTool}
             onClearAllDrawingTools={handleClearAllDrawingTools}
             indicators={indicators}
-            onUpdateIndicators={setIndicators}
+            onUpdateIndicators={(updates) =>
+              setIndicators((prev) => ({
+                ...prev,
+                ...updates,
+              }))
+            }
           />
+
+          {/* Interactive User-Selectable UTC Timezone Clock & Selector */}
+          <UtcTimeSelector />
+
+          {/* Chart Background Grid Function Selector (Crisp / Dense / Dotted / Off) */}
+          <div className="relative" ref={gridDropdownRef}>
+            <button
+              id="chart-grid-mode-btn"
+              onClick={() => {
+                sound.playClick();
+                setIsGridDropdownOpen(!isGridDropdownOpen);
+              }}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold border transition-all cursor-pointer ${
+                gridMode !== 'off'
+                  ? 'bg-slate-800/90 text-amber-400 border-amber-500/40 hover:bg-slate-800 shadow-sm'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+              title="Chart Background Grid Function"
+            >
+              <Grid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline capitalize">Grid: {gridMode}</span>
+              <ChevronDown
+                className={`w-3 h-3 transition-transform duration-150 ${
+                  isGridDropdownOpen ? 'rotate-180 text-amber-400' : 'text-slate-500'
+                }`}
+              />
+            </button>
+
+            {isGridDropdownOpen && (
+              <div className="absolute left-0 bottom-full mb-1.5 w-44 bg-[#0d1322] border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
+                <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase tracking-wider border-b border-slate-800 mb-1">
+                  Chart Grid Style
+                </div>
+
+                {[
+                  { id: 'crisp', label: 'Crisp Dashed', desc: 'Optimal level tracking' },
+                  { id: 'dense', label: 'Dense Solid', desc: 'High precision scalper grid' },
+                  { id: 'dotted', label: 'Dotted Grid', desc: 'Subtle technical guidance' },
+                  { id: 'off', label: 'Grid Off', desc: 'Clean dark canvas' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    id={`chart-grid-option-${item.id}`}
+                    onClick={() => {
+                      sound.playClick();
+                      setGridMode(item.id as ChartGridMode);
+                      setIsGridDropdownOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer text-left ${
+                      gridMode === item.id
+                        ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40'
+                        : 'text-slate-300 hover:bg-slate-800/80'
+                    }`}
+                  >
+                    <div>
+                      <div>{item.label}</div>
+                      <div className="text-[9px] text-slate-400 font-normal">{item.desc}</div>
+                    </div>
+                    {gridMode === item.id && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: Chart Type & Zoom Tools */}
@@ -916,8 +1119,23 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           chart={chartRef.current}
           series={seriesRef.current}
           activeTrades={activeTrades}
-          timeframe={timeframe}
-          lastCandleTime={lastCandleTime}
+          timeframeSeconds={
+            timeframe === '5s'
+              ? 5
+              : timeframe === '15s'
+              ? 15
+              : timeframe === '30s'
+              ? 30
+              : timeframe === '1m'
+              ? 60
+              : timeframe === '5m'
+              ? 300
+              : timeframe === '15m'
+              ? 900
+              : timeframe === '1h'
+              ? 3600
+              : 86400
+          }
           currentPrice={livePrice}
           drawingTools={drawingTools}
           onUpdateDrawingTool={handleUpdateDrawingTool}
@@ -945,6 +1163,22 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
                 : currentRsiValue <= indicators.rsi.oversold
                 ? 'Oversold'
                 : 'Neutral'}
+            </span>
+          </div>
+        )}
+
+        {/* Floating Live MACD Indicator Badge when enabled */}
+        {currentMacdValue !== null && (
+          <div className="absolute top-11 right-4 z-20 flex items-center gap-2 px-3 py-1 rounded-lg bg-[#0a0f1d]/90 border border-slate-700/80 font-mono text-[11px] shadow-xl backdrop-blur-md">
+            <span className="text-purple-400 font-bold">MACD ({indicators.macd.fast},{indicators.macd.slow},{indicators.macd.signal}):</span>
+            <span className="text-blue-400 font-mono text-[10px]">{currentMacdValue.macdLine.toFixed(2)}</span>
+            <span className="text-amber-400 font-mono text-[10px]">Sig: {currentMacdValue.signalLine.toFixed(2)}</span>
+            <span
+              className={`font-black text-xs ${
+                currentMacdValue.histogram >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              Hist: {currentMacdValue.histogram >= 0 ? `+${currentMacdValue.histogram.toFixed(2)}` : currentMacdValue.histogram.toFixed(2)}
             </span>
           </div>
         )}

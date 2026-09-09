@@ -67,6 +67,33 @@ export interface BrokerUserRecord {
   registeredAt: number;
 }
 
+export interface BinanceGatewaySettings {
+  binanceId: string;
+  merchantName: string;
+  qrCodeUrl: string;
+  notes: string;
+  updatedAt: number;
+}
+
+export interface SupportTicketRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  subject: string;
+  category: string;
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
+  createdAt: number;
+  updatedAt: number;
+  messages: Array<{
+    id: string;
+    sender: 'user' | 'support' | 'admin';
+    senderName: string;
+    text: string;
+    timestamp: number;
+  }>;
+}
+
 interface TradeRecord {
   id: string;
   userId: string;
@@ -298,6 +325,46 @@ async function startServer() {
       totalWithdrawn: 310.00,
       registeredAt: Date.now() - 1000 * 60 * 60 * 120,
     }
+  ];
+
+  // Configurable Binance Pay Gateway Settings (Admin Managed)
+  const binanceGatewaySettings: BinanceGatewaySettings = {
+    binanceId: '794380283',
+    merchantName: 'CryptoBari',
+    qrCodeUrl: '',
+    notes: 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
+    updatedAt: Date.now(),
+  };
+
+  // Live Support Tickets Desk
+  const supportTickets: SupportTicketRecord[] = [
+    {
+      id: 'TICK-802',
+      userId: 'usr_johirul',
+      userName: 'Johirul Islam',
+      userEmail: 'johirul4848@gmail.com',
+      subject: 'Binance Pay Instant Settlement Inquiry',
+      category: 'Billing & Deposit',
+      status: 'RESOLVED',
+      createdAt: Date.now() - 3600000 * 12,
+      updatedAt: Date.now() - 3600000 * 10,
+      messages: [
+        {
+          id: 'msg-1',
+          sender: 'user',
+          senderName: 'Johirul Islam',
+          text: 'Hello, I sent 150 USD via Binance Pay ID. When will my account balance reflect it?',
+          timestamp: Date.now() - 3600000 * 12,
+        },
+        {
+          id: 'msg-2',
+          sender: 'admin',
+          senderName: 'CryptoBari Treasury Admin',
+          text: 'Welcome Johirul! Your deposit was verified and live balance credited. Happy trading!',
+          timestamp: Date.now() - 3600000 * 10,
+        },
+      ],
+    },
   ];
 
   // Initial seed symbols
@@ -785,9 +852,9 @@ async function startServer() {
       userEmail,
       amount: numAmount,
       currency: 'USD',
-      method: method || 'Crypto Transfer',
-      txHash: txHash || '0x' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
-      binanceId: binanceId || '849' + Math.floor(100000 + Math.random() * 900000),
+      method: method || 'Binance Pay',
+      txHash: txHash || ('BPAY-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase()),
+      binanceId: binanceId ? String(binanceId).trim() : 'Unspecified',
       status: 'PENDING',
       createdAt: Date.now(),
     };
@@ -858,10 +925,16 @@ async function startServer() {
 
   // User submits a withdrawal request
   app.post('/api/wallet/withdraw-request', (req, res) => {
-    const { amount, method, address, network = 'TRON TRC-20', userId = 'usr_johirul', userName = 'Johirul Islam', userEmail = 'johirul4848@gmail.com' } = req.body;
+    const { amount, method, address, network = 'Binance Pay UID Transfer', userId = 'usr_johirul', userName = 'Johirul Islam', userEmail = 'johirul4848@gmail.com' } = req.body;
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       return res.status(400).json({ error: 'Valid withdrawal amount required' });
+    }
+    if (walletState.liveBalance < 10) {
+      return res.status(400).json({ error: 'Minimum live balance of $10.00 USD required to submit a withdrawal.' });
+    }
+    if (numAmount < 10) {
+      return res.status(400).json({ error: 'Minimum withdrawal amount is $10.00 USD. Requests under $10 are not permitted.' });
     }
     if (walletState.liveBalance < numAmount) {
       return res.status(400).json({ error: 'Insufficient Live Balance for this withdrawal request' });
@@ -877,9 +950,9 @@ async function startServer() {
       userEmail,
       amount: numAmount,
       currency: 'USD',
-      method: method || 'USDT TRC-20',
-      address: address || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-      network,
+      method: method || 'Binance Pay',
+      address: address || 'PayID: 794380283',
+      network: 'Binance Pay UID Transfer',
       status: 'PENDING',
       createdAt: Date.now(),
     };
@@ -1174,7 +1247,111 @@ async function startServer() {
     });
   });
 
-  // 8. Detailed Trade Reports
+  // 8. Binance Payment Gateway Settings (Admin Managed)
+  app.get('/api/payment/binance-settings', (req, res) => {
+    res.json(binanceGatewaySettings);
+  });
+
+  app.post('/api/admin/payment/binance-settings', (req, res) => {
+    const { binanceId, merchantName, qrCodeUrl, notes } = req.body;
+    if (binanceId !== undefined && String(binanceId).trim()) {
+      binanceGatewaySettings.binanceId = String(binanceId).trim();
+    }
+    if (merchantName !== undefined && String(merchantName).trim()) {
+      binanceGatewaySettings.merchantName = String(merchantName).trim();
+    }
+    if (qrCodeUrl !== undefined) {
+      binanceGatewaySettings.qrCodeUrl = String(qrCodeUrl).trim();
+    }
+    if (notes !== undefined) {
+      binanceGatewaySettings.notes = String(notes).trim();
+    }
+    binanceGatewaySettings.updatedAt = Date.now();
+
+    res.json({
+      success: true,
+      message: 'Binance Pay gateway configuration updated successfully.',
+      settings: binanceGatewaySettings,
+    });
+  });
+
+  // 9. 24/7 Support Desk & Ticketing API
+  app.get('/api/support/tickets', (req, res) => {
+    res.json(supportTickets);
+  });
+
+  app.post('/api/support/tickets', (req, res) => {
+    const { subject, category, message, userId = 'usr_johirul', userName = 'Johirul Islam', userEmail = 'johirul4848@gmail.com' } = req.body;
+    if (!subject || !message) {
+      return res.status(400).json({ error: 'Subject and message are required' });
+    }
+
+    const newTicket: SupportTicketRecord = {
+      id: 'TICK-' + Math.floor(100 + Math.random() * 900),
+      userId,
+      userName,
+      userEmail,
+      subject,
+      category: category || 'General Trading',
+      status: 'OPEN',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [
+        {
+          id: 'msg-' + Date.now(),
+          sender: 'user',
+          senderName: userName,
+          text: message,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    supportTickets.unshift(newTicket);
+    res.json({ success: true, ticket: newTicket });
+  });
+
+  app.post('/api/support/tickets/:id/messages', (req, res) => {
+    const { id } = req.params;
+    const { text, sender = 'user', senderName = 'Johirul Islam' } = req.body;
+    const ticket = supportTickets.find(t => t.id === id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Message text cannot be empty' });
+    }
+
+    const newMsg = {
+      id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+      sender: sender as 'user' | 'support' | 'admin',
+      senderName: senderName || (sender === 'admin' ? 'CryptoBari Treasury Admin' : 'Johirul Islam'),
+      text: text.trim(),
+      timestamp: Date.now(),
+    };
+
+    ticket.messages.push(newMsg);
+    ticket.updatedAt = Date.now();
+    if (sender === 'admin' || sender === 'support') {
+      ticket.status = 'IN_PROGRESS';
+    }
+
+    res.json({ success: true, message: newMsg, ticket });
+  });
+
+  app.post('/api/admin/support/tickets/:id/status', (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const ticket = supportTickets.find(t => t.id === id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    ticket.status = status;
+    ticket.updatedAt = Date.now();
+    res.json({ success: true, ticket });
+  });
+
+  // 10. Detailed Trade Reports
   app.get('/api/admin/reports', (req, res) => {
     res.json({
       allTrades: closedTrades,

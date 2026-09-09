@@ -172,3 +172,69 @@ export function calculateRSI(candles: CandleData[], period: number = 14): { late
   return { latestRSI, points: sanitized };
 }
 
+/**
+ * Calculate Moving Average Convergence Divergence (MACD)
+ */
+export function calculateMACD(
+  candles: CandleData[],
+  fastPeriod: number = 12,
+  slowPeriod: number = 26,
+  signalPeriod: number = 9
+): {
+  macdLine: number;
+  signalLine: number;
+  histogram: number;
+  trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+} {
+  if (!candles || candles.length < slowPeriod + signalPeriod) {
+    return { macdLine: 0, signalLine: 0, histogram: 0, trend: 'NEUTRAL' };
+  }
+
+  const fastEMA = calculateEMA(candles, fastPeriod);
+  const slowEMA = calculateEMA(candles, slowPeriod);
+
+  if (fastEMA.length === 0 || slowEMA.length === 0) {
+    return { macdLine: 0, signalLine: 0, histogram: 0, trend: 'NEUTRAL' };
+  }
+
+  // Align timestamps
+  const slowTimeMap = new Map<number, number>();
+  slowEMA.forEach((pt) => slowTimeMap.set(Number(pt.time), pt.value));
+
+  const macdPoints: IndicatorPoint[] = [];
+  for (const f of fastEMA) {
+    const t = Number(f.time);
+    const slowVal = slowTimeMap.get(t);
+    if (slowVal !== undefined) {
+      macdPoints.push({
+        time: t,
+        value: f.value - slowVal,
+      });
+    }
+  }
+
+  if (macdPoints.length < signalPeriod) {
+    return { macdLine: 0, signalLine: 0, histogram: 0, trend: 'NEUTRAL' };
+  }
+
+  // Calculate signal line (EMA of MACD)
+  let signalEMA = macdPoints.slice(0, signalPeriod).reduce((acc, p) => acc + p.value, 0) / signalPeriod;
+  const k = 2 / (signalPeriod + 1);
+
+  for (let i = signalPeriod; i < macdPoints.length; i++) {
+    signalEMA = macdPoints[i].value * k + signalEMA * (1 - k);
+  }
+
+  const latestMACD = macdPoints[macdPoints.length - 1].value;
+  const histogram = latestMACD - signalEMA;
+  const trend = histogram > 0 ? 'BULLISH' : histogram < 0 ? 'BEARISH' : 'NEUTRAL';
+
+  return {
+    macdLine: Number(latestMACD.toFixed(4)),
+    signalLine: Number(signalEMA.toFixed(4)),
+    histogram: Number(histogram.toFixed(4)),
+    trend,
+  };
+}
+
+

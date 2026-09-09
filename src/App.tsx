@@ -23,7 +23,12 @@ import { AssetSelectorModal } from './components/trading/AssetSelectorModal';
 import { TradeResultToast } from './components/trading/TradeResultToast';
 import { TradeHistoryPage } from './components/history/TradeHistoryPage';
 import { WatchlistPage } from './components/markets/WatchlistPage';
-import { WalletModal } from './components/wallet/WalletModal';
+import { DepositModal } from './components/wallet/DepositModal';
+import { WithdrawModal } from './components/wallet/WithdrawModal';
+import { DepositPage } from './components/wallet/DepositPage';
+import { WithdrawalPage } from './components/wallet/WithdrawalPage';
+import { ProfilePage } from './components/profile/ProfilePage';
+import { NoticesModal } from './components/notices/NoticesModal';
 import { SupportPage } from './components/support/SupportPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminAuthModal } from './components/admin/AdminAuthModal';
@@ -33,6 +38,7 @@ import { PlatformOverview } from './components/common/PlatformOverview';
 import { HomePage } from './components/home/HomePage';
 import { AuthModal } from './components/auth/AuthModal';
 import { sound } from './utils/audio';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 // Default initial symbol
 const DEFAULT_SYMBOL: MarketSymbol = {
@@ -66,7 +72,9 @@ export const App: React.FC = () => {
   // Navigation & UI State
   const [currentTab, setCurrentTab] = useState<NavTab>('trade');
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
-  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
+  const [isNoticesModalOpen, setIsNoticesModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'area'>('candles');
 
@@ -342,36 +350,36 @@ export const App: React.FC = () => {
   // Handle reset demo balance
   const handleResetDemo = async () => {
     try {
-      const updated = await apiService.resetDemoBalance();
-      setWallet(updated);
+      sound.playClick();
+      const res = await apiService.resetDemoBalance();
+      const newBal = (res && typeof res.newBalance === 'number') ? res.newBalance : 10000.00;
+      setWallet(prev => ({
+        ...prev,
+        demoBalance: newBal,
+      }));
     } catch {
       setWallet(prev => ({ ...prev, demoBalance: 10000.00 }));
     }
   };
 
-  // Handle deposit
-  const handleDeposit = (amount: number, method: string) => {
-    setWallet(prev => ({
-      ...prev,
-      liveBalance: prev.liveBalance + amount,
-    }));
-
+  // Handle user deposit request via Binance Pay
+  const handleDepositSuccess = (amount: number, method: string, binanceId: string, txHash: string) => {
     setTransactions(prev => [
       {
-        id: `TX-${Date.now()}`,
+        id: `DEP-${Date.now()}`,
         type: 'DEPOSIT',
         amount,
         currency: 'USD',
-        status: 'COMPLETED',
+        status: 'PENDING',
         timestamp: Date.now(),
-        description: `Deposit via ${method}`,
+        description: `Deposit via Binance Pay (Sender UID: ${binanceId || 'N/A'}) • Tx: ${txHash.slice(0, 10)}...`,
       },
       ...prev,
     ]);
   };
 
-  // Handle withdraw
-  const handleWithdraw = (amount: number, method: string, address: string) => {
+  // Handle user withdraw submission via Binance Pay
+  const handleWithdrawSuccess = (amount: number, method: string, address: string) => {
     setWallet(prev => ({
       ...prev,
       liveBalance: Math.max(0, prev.liveBalance - amount),
@@ -379,13 +387,13 @@ export const App: React.FC = () => {
 
     setTransactions(prev => [
       {
-        id: `TX-${Date.now()}`,
+        id: `WTH-${Date.now()}`,
         type: 'WITHDRAWAL',
         amount,
         currency: 'USD',
         status: 'PENDING',
         timestamp: Date.now(),
-        description: `Withdrawal via ${method} to ${address.slice(0, 8)}...`,
+        description: `Withdrawal via Binance Pay to ID: ${address}`,
       },
       ...prev,
     ]);
@@ -509,23 +517,19 @@ export const App: React.FC = () => {
         onResetDemo={handleResetDemo}
         onOpenDeposit={() => {
           sound.playClick();
-          setIsWalletModalOpen(true);
+          setCurrentTab('deposit');
         }}
         onOpenWithdrawal={() => {
           sound.playClick();
-          setIsWalletModalOpen(true);
+          setCurrentTab('withdrawal');
         }}
         onOpenNotifications={() => {
           sound.playClick();
-          if (activeTrades.length > 0) {
-            setCurrentTab('trade');
-          } else {
-            setCurrentTab('history');
-          }
+          setIsNoticesModalOpen(true);
         }}
         onOpenProfile={() => {
           sound.playClick();
-          setIsProfileModalOpen(true);
+          setCurrentTab('profile');
         }}
         unreadNotificationsCount={activeTrades.length}
         currentTab={currentTab}
@@ -574,21 +578,23 @@ export const App: React.FC = () => {
               <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
                 {/* Candlestick Interactive Chart */}
                 <div className="flex-1 flex flex-col h-full min-h-0 relative">
-                  <ChartContainer
-                    symbol={activeSymbol}
-                    currentPrice={currentPrice}
-                    timeframe={timeframe}
-                    onTimeframeChange={setTimeframe}
-                    chartType={chartType}
-                    onChartTypeChange={setChartType}
-                    accountMode={accountMode}
-                    connectionStatus={connectionStatus}
-                    activeTrades={activeTrades.filter(t => t.symbol === activeSymbol.symbol)}
-                    onPriceUpdate={(price) => {
-                      setCurrentPrice(price);
-                      setActiveSymbol(prev => ({ ...prev, price }));
-                    }}
-                  />
+                  <ErrorBoundary fallbackTitle="Trading Chart">
+                    <ChartContainer
+                      symbol={activeSymbol}
+                      currentPrice={currentPrice}
+                      timeframe={timeframe}
+                      onTimeframeChange={setTimeframe}
+                      chartType={chartType}
+                      onChartTypeChange={setChartType}
+                      accountMode={accountMode}
+                      connectionStatus={connectionStatus}
+                      activeTrades={activeTrades.filter(t => t.symbol === activeSymbol.symbol)}
+                      onPriceUpdate={(price) => {
+                        setCurrentPrice(price);
+                        setActiveSymbol(prev => ({ ...prev, price }));
+                      }}
+                    />
+                  </ErrorBoundary>
                 </div>
 
                 {/* Right Desktop Trading Panel (Quotex style) */}
@@ -635,15 +641,113 @@ export const App: React.FC = () => {
             <TradeHistoryPage trades={allTrades} />
           )}
 
+          {currentTab === 'deposit' && (
+            <div className="flex-1 overflow-y-auto">
+              <DepositPage
+                liveBalance={wallet.liveBalance}
+                userEmail={profile.email}
+                userName={profile.name}
+                onBack={() => {
+                  sound.playClick();
+                  setCurrentTab('trade');
+                }}
+                onDepositSuccess={(amount, method, binanceId) => {
+                  setTransactions((prev) => [
+                    {
+                      id: `TX-DEP-${Date.now().toString().slice(-6)}`,
+                      type: 'DEPOSIT',
+                      amount,
+                      currency: 'USD',
+                      status: 'PENDING',
+                      timestamp: Date.now(),
+                      description: `Deposit request via ${method} (Binance ID: ${binanceId})`,
+                    },
+                    ...prev,
+                  ]);
+                }}
+              />
+            </div>
+          )}
+
+          {currentTab === 'withdrawal' && (
+            <div className="flex-1 overflow-y-auto">
+              <WithdrawalPage
+                liveBalance={wallet.liveBalance}
+                userEmail={profile.email}
+                userName={profile.name}
+                onBack={() => {
+                  sound.playClick();
+                  setCurrentTab('trade');
+                }}
+                onWithdrawSuccess={(amount, method, address) => {
+                  setWallet((prev) => ({
+                    ...prev,
+                    liveBalance: Math.max(0, prev.liveBalance - amount),
+                  }));
+                  setTransactions((prev) => [
+                    {
+                      id: `TX-WTH-${Date.now().toString().slice(-6)}`,
+                      type: 'WITHDRAWAL',
+                      amount,
+                      currency: 'USD',
+                      status: 'PENDING',
+                      timestamp: Date.now(),
+                      description: `Withdrawal request to Binance ID ${address} (${method})`,
+                    },
+                    ...prev,
+                  ]);
+                }}
+              />
+            </div>
+          )}
+
+          {currentTab === 'profile' && (
+            <div className="flex-1 overflow-y-auto">
+              <ProfilePage
+                profile={profile}
+                liveBalance={wallet.liveBalance}
+                demoBalance={wallet.demoBalance}
+                onBack={() => {
+                  sound.playClick();
+                  setCurrentTab('trade');
+                }}
+                onOpenDeposit={() => {
+                  sound.playClick();
+                  setCurrentTab('deposit');
+                }}
+                onOpenWithdrawal={() => {
+                  sound.playClick();
+                  setCurrentTab('withdrawal');
+                }}
+                onLogout={handleLogout}
+                onUpdateProfile={(updated) => setProfile((prev) => ({ ...prev, ...updated }))}
+              />
+            </div>
+          )}
+
           {currentTab === 'wallet' && (
             <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-[#0c1018]">
               <div className="max-w-4xl mx-auto">
-                <button
-                  onClick={() => setIsWalletModalOpen(true)}
-                  className="mb-4 px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-lg cursor-pointer"
-                >
-                  Open Full Financial Modal
-                </button>
+                <div className="flex flex-wrap gap-3 mb-4">
+                  <button
+                    onClick={() => {
+                      sound.playClick();
+                      setCurrentTab('deposit');
+                    }}
+                    className="px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-500/20 cursor-pointer transition active:scale-95 flex items-center gap-2"
+                  >
+                    <span>+ Deposit (Binance Pay)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      sound.playClick();
+                      setCurrentTab('withdrawal');
+                    }}
+                    className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 cursor-pointer transition active:scale-95 flex items-center gap-2"
+                  >
+                    <span>Withdrawal (Binance Pay • Min $10)</span>
+                  </button>
+                </div>
                 <div className="p-6 bg-[#111724] border border-slate-800 rounded-2xl">
                   <h2 className="text-xl font-bold text-slate-100">Wallet Details</h2>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4 font-mono text-sm">
@@ -736,24 +840,40 @@ export const App: React.FC = () => {
         favorites={favorites}
       />
 
-      {/* Financial Wallet Modal (Deposit & Withdrawal) */}
-      <WalletModal
-        isOpen={isWalletModalOpen}
-        onClose={() => setIsWalletModalOpen(false)}
-        wallet={wallet}
-        accountMode={accountMode}
-        onResetDemo={handleResetDemo}
-        onDeposit={handleDeposit}
-        onWithdraw={handleWithdraw}
-        transactions={transactions}
+      {/* Dedicated Binance Pay Deposit Modal */}
+      <DepositModal
+        isOpen={isDepositModalOpen}
+        onClose={() => setIsDepositModalOpen(false)}
+        onDepositSuccess={handleDepositSuccess}
+        userName={profile.name}
+        userEmail={profile.email}
       />
 
-      {/* User Profile & KYC Modal */}
+      {/* Dedicated Binance Pay Withdrawal Modal */}
+      <WithdrawModal
+        isOpen={isWithdrawModalOpen}
+        onClose={() => setIsWithdrawModalOpen(false)}
+        liveBalance={wallet.liveBalance}
+        onWithdrawSuccess={handleWithdrawSuccess}
+        userName={profile.name}
+        userEmail={profile.email}
+      />
+
+      {/* Broker Notices & Announcements Modal */}
+      <NoticesModal
+        isOpen={isNoticesModalOpen}
+        onClose={() => setIsNoticesModalOpen(false)}
+      />
+
+      {/* User Profile Modal */}
       <ProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         profile={profile}
+        liveBalance={wallet.liveBalance}
         onUpdateProfile={(updated) => setProfile(prev => ({ ...prev, ...updated }))}
+        onOpenDeposit={() => setIsDepositModalOpen(true)}
+        onOpenWithdraw={() => setIsWithdrawModalOpen(true)}
         onLogout={handleLogout}
       />
 

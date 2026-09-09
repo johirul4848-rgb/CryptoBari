@@ -22,7 +22,13 @@ import {
   Trash2,
   AlertTriangle,
   ArrowLeft,
-  ExternalLink
+  ExternalLink,
+  QrCode,
+  LifeBuoy,
+  Upload,
+  Send,
+  MessageSquare,
+  Image,
 } from 'lucide-react';
 import { MarketSymbol } from '../../types';
 import { sound } from '../../utils/audio';
@@ -100,7 +106,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentLiveBalance,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'deposits' | 'withdrawals' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets'
+    'dashboard' | 'deposits' | 'withdrawals' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets' | 'gateway' | 'support'
   >('dashboard');
 
   // Live state fetched from server
@@ -113,6 +119,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [recentTrades, setRecentTrades] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  // Binance Gateway Settings state
+  const [binanceId, setBinanceId] = useState('794380283');
+  const [merchantName, setMerchantName] = useState('CryptoBari');
+  const [qrImage, setQrImage] = useState('/binance_qr.png');
+  const [qrInstructions, setQrInstructions] = useState('Send via Binance Pay > Binance ID: 794380283 or scan QR Code.');
+  const [isSavingGateway, setIsSavingGateway] = useState(false);
+
+  // Support Tickets state
+  const [supportTickets, setSupportTickets] = useState<any[]>([]);
+  const [selectedTicketId, setSelectedTicketId] = useState<string>('');
+  const [adminReplyText, setAdminReplyText] = useState('');
+  const [supportFilter, setSupportFilter] = useState<'ALL' | 'OPEN' | 'RESOLVED'>('ALL');
 
   // Search/Filters
   const [depositFilter, setDepositFilter] = useState<'PENDING' | 'APPROVED' | 'ALL'>('PENDING');
@@ -139,7 +158,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
-      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes] = await Promise.all([
+      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes] = await Promise.all([
         fetch('/api/admin/deposits').then(r => r.json()).catch(() => []),
         fetch('/api/admin/withdrawals').then(r => r.json()).catch(() => []),
         fetch('/api/admin/notices').then(r => r.json()).catch(() => []),
@@ -147,6 +166,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fetch('/api/admin/finance').then(r => r.json()).catch(() => null),
         fetch('/api/admin/referrals').then(r => r.json()).catch(() => null),
         fetch('/api/admin/reports').then(r => r.json()).catch(() => ({ allTrades: [] })),
+        fetch('/api/payment/binance-settings').then(r => r.json()).catch(() => null),
+        fetch('/api/support/tickets').then(r => r.json()).catch(() => []),
       ]);
 
       if (Array.isArray(depRes)) setDeposits(depRes);
@@ -156,6 +177,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (finRes) setFinanceData(finRes);
       if (refRes) setReferralData(refRes);
       if (repRes && Array.isArray(repRes.allTrades)) setRecentTrades(repRes.allTrades);
+      if (binRes) {
+        if (binRes.binanceId) setBinanceId(binRes.binanceId);
+        if (binRes.merchantName) setMerchantName(binRes.merchantName);
+        if (binRes.qrImage) setQrImage(binRes.qrImage);
+        if (binRes.instructions) setQrInstructions(binRes.instructions);
+      }
+      if (Array.isArray(supRes)) {
+        setSupportTickets(supRes);
+        if (supRes.length > 0 && !selectedTicketId) {
+          setSelectedTicketId(supRes[0].id);
+        }
+      }
     } catch {
       // ignore
     } finally {
@@ -170,6 +203,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const showNotification = (msg: string) => {
     setActionSuccessMsg(msg);
     setTimeout(() => setActionSuccessMsg(null), 4000);
+  };
+
+  // Save Binance Gateway Settings
+  const handleSaveBinanceGateway = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingGateway(true);
+    sound.playClick();
+    try {
+      const res = await fetch('/api/payment/binance-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          binanceId: binanceId.trim(),
+          merchantName: merchantName.trim(),
+          qrImage: qrImage.trim(),
+          instructions: qrInstructions.trim(),
+        }),
+      });
+      if (res.ok) {
+        sound.playWin();
+        showNotification('Binance Gateway Settings saved and deployed to Deposit/Withdrawal interfaces!');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsSavingGateway(false);
+    }
+  };
+
+  // Admin reply to support ticket
+  const handleSendAdminSupportReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminReplyText.trim() || !selectedTicketId) return;
+    sound.playClick();
+    const textToSend = adminReplyText.trim();
+    setAdminReplyText('');
+    try {
+      const res = await fetch(`/api/support/tickets/${selectedTicketId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender: 'support',
+          text: textToSend,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setSupportTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
+        showNotification('Support reply sent to user!');
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Update support ticket status
+  const handleUpdateTicketStatus = async (ticketId: string, status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED') => {
+    sound.playClick();
+    try {
+      const res = await fetch(`/api/support/tickets/${ticketId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status } : t));
+        showNotification(`Ticket marked as ${status}`);
+      }
+    } catch {
+      // ignore
+    }
   };
 
   // 1. Approve Deposit Request
@@ -748,6 +852,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <Sliders className="w-4 h-4 text-amber-400" />
                 <span>Asset Payout Rates</span>
               </div>
+            </button>
+
+            <button
+              id="admin-tab-gateway"
+              onClick={() => setActiveTab('gateway')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
+                activeTab === 'gateway'
+                  ? 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <QrCode className="w-4 h-4 text-amber-400" />
+                <span>Binance Gateway</span>
+              </div>
+            </button>
+
+            <button
+              id="admin-tab-support"
+              onClick={() => setActiveTab('support')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
+                activeTab === 'support'
+                  ? 'bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.2)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <LifeBuoy className="w-4 h-4 text-cyan-400" />
+                <span>Support Desk</span>
+              </div>
+              {supportTickets.filter((t) => t.status === 'OPEN').length > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500 text-slate-950">
+                  {supportTickets.filter((t) => t.status === 'OPEN').length}
+                </span>
+              )}
             </button>
           </nav>
 
@@ -2142,6 +2281,345 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 10: BINANCE PAYMENT GATEWAY SETTINGS */}
+          {activeTab === 'gateway' && (
+            <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                  <QrCode className="w-6 h-6 text-amber-400" />
+                  <span>Binance Pay Gateway Configuration</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Update broker deposit Binance ID number and upload custom QR code image seen by all traders.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Form Settings (7 Cols) */}
+                <form
+                  onSubmit={handleSaveBinanceGateway}
+                  className="lg:col-span-7 bg-[#0f1524] border border-slate-800 rounded-3xl p-6 sm:p-7 space-y-5 shadow-xl"
+                >
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                      <span>Binance Pay ID Number</span>
+                      <span className="text-[10px] text-amber-400 font-mono">Shown to all depositors</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={binanceId}
+                      onChange={(e) => setBinanceId(e.target.value)}
+                      placeholder="e.g. 794380283"
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white font-mono text-sm focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">Merchant Nickname / Payee Name</label>
+                    <input
+                      type="text"
+                      value={merchantName}
+                      onChange={(e) => setMerchantName(e.target.value)}
+                      placeholder="e.g. CryptoBari"
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                      <span>Binance Pay QR Code</span>
+                      <span className="text-[10px] text-slate-400">Upload image or paste image URL</span>
+                    </label>
+
+                    <div className="flex items-center gap-3">
+                      <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 border border-dashed border-amber-500/40 rounded-xl cursor-pointer text-xs font-bold text-amber-300 transition">
+                        <Upload className="w-4 h-4" />
+                        <span>Upload QR Code Image</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                if (uploadEvent.target?.result) {
+                                  setQrImage(uploadEvent.target.result as string);
+                                  showNotification('QR Code image uploaded successfully!');
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-slate-400">Or Image URL / Path:</span>
+                      <input
+                        type="text"
+                        value={qrImage}
+                        onChange={(e) => setQrImage(e.target.value)}
+                        placeholder="/binance_qr.png or https://..."
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">Trader Deposit Instructions / Guidance</label>
+                    <textarea
+                      rows={3}
+                      value={qrInstructions}
+                      onChange={(e) => setQrInstructions(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-slate-300 text-xs focus:outline-none focus:border-amber-400 leading-relaxed"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSavingGateway}
+                    className="w-full py-3.5 bg-gradient-to-r from-amber-500 via-[#F0B90B] to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-sm rounded-xl shadow-lg transition active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle className="w-4 h-4 stroke-[2.5]" />
+                    <span>{isSavingGateway ? 'Deploying Changes...' : 'Save & Deploy Gateway Configuration'}</span>
+                  </button>
+                </form>
+
+                {/* Live Preview Card (5 Cols) */}
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                    Trader View Real-Time Preview
+                  </div>
+
+                  <div className="bg-[#0f1524] border border-amber-500/30 rounded-3xl p-6 shadow-2xl space-y-4 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-[#F0B90B] flex items-center justify-center text-slate-950 font-black text-xs">
+                        B
+                      </div>
+                      <span className="font-black text-white text-sm">{merchantName || 'CryptoBari'}</span>
+                    </div>
+
+                    <div className="relative mx-auto w-48 h-48 rounded-2xl bg-white p-3 shadow-xl flex items-center justify-center overflow-hidden">
+                      {qrImage ? (
+                        <img
+                          src={qrImage}
+                          alt="Binance QR Preview"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <QrCode className="w-32 h-32 text-slate-900" />
+                      )}
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                      <div className="text-[11px] text-slate-400">Binance Pay ID</div>
+                      <div className="font-mono text-amber-400 font-black text-base">{binanceId || '794380283'}</div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      {qrInstructions}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 11: SUPPORT TICKETS DESK */}
+          {activeTab === 'support' && (
+            <div className="space-y-6 max-w-6xl mx-auto animate-in fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                    <LifeBuoy className="w-6 h-6 text-cyan-400" />
+                    <span>Broker Client Support Desk</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Real-time inquiry management, trader dialogue, and ticket resolution.
+                  </p>
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex items-center gap-1.5 p-1 bg-[#101626] rounded-xl border border-slate-800">
+                  <button
+                    onClick={() => setSupportFilter('ALL')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      supportFilter === 'ALL'
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    All ({supportTickets.length})
+                  </button>
+                  <button
+                    onClick={() => setSupportFilter('OPEN')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      supportFilter === 'OPEN'
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Open ({supportTickets.filter(t => t.status === 'OPEN').length})
+                  </button>
+                  <button
+                    onClick={() => setSupportFilter('RESOLVED')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      supportFilter === 'RESOLVED'
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Resolved ({supportTickets.filter(t => t.status === 'RESOLVED').length})
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                {/* Tickets List (4 cols) */}
+                <div className="lg:col-span-4 bg-[#0f1524] border border-slate-800 rounded-3xl p-4 space-y-2.5 shadow-xl">
+                  <div className="text-xs font-black text-slate-400 px-2 py-1 uppercase tracking-wider">
+                    Inquiry Queue
+                  </div>
+
+                  <div className="space-y-2 max-h-[520px] overflow-y-auto custom-scrollbar pr-1">
+                    {supportTickets.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 text-xs">
+                        No support tickets currently received.
+                      </div>
+                    ) : (
+                      supportTickets
+                        .filter(t => supportFilter === 'ALL' || t.status === supportFilter)
+                        .map(t => (
+                          <div
+                            key={t.id}
+                            onClick={() => {
+                              sound.playClick();
+                              setSelectedTicketId(t.id);
+                            }}
+                            className={`p-3.5 rounded-2xl border text-xs cursor-pointer transition ${
+                              selectedTicketId === t.id
+                                ? 'bg-gradient-to-r from-[#172338] to-[#121c2e] border-cyan-500/50 text-slate-100 shadow-md ring-1 ring-cyan-500/30'
+                                : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 font-bold">
+                              <span className="truncate text-white">{t.subject}</span>
+                              <span
+                                className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                                  t.status === 'RESOLVED'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                }`}
+                              >
+                                {t.status}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
+                              <span className="font-mono text-cyan-400">{t.id}</span>
+                              <span>{new Date(t.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Conversation Box (8 cols) */}
+                <div className="lg:col-span-8 bg-[#0f1524] border border-slate-800 rounded-3xl flex flex-col h-[560px] shadow-xl overflow-hidden">
+                  {supportTickets.find(t => t.id === selectedTicketId) ? (
+                    (() => {
+                      const activeT = supportTickets.find(t => t.id === selectedTicketId)!;
+                      return (
+                        <>
+                          <div className="p-4 border-b border-slate-800 bg-[#141b2e] flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="font-black text-sm text-white">{activeT.subject}</div>
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                User: <strong className="text-slate-200">{activeT.userId}</strong> • Category: <strong className="text-cyan-400">{activeT.category}</strong>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {activeT.status !== 'RESOLVED' ? (
+                                <button
+                                  onClick={() => handleUpdateTicketStatus(activeT.id, 'RESOLVED')}
+                                  className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold rounded-lg text-xs border border-emerald-500/40 transition cursor-pointer"
+                                >
+                                  Mark Resolved
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleUpdateTicketStatus(activeT.id, 'OPEN')}
+                                  className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold rounded-lg text-xs border border-amber-500/40 transition cursor-pointer"
+                                >
+                                  Reopen Ticket
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Message List */}
+                          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-[#090d18]">
+                            {activeT.messages.map((m: any, idx: number) => (
+                              <div
+                                key={idx}
+                                className={`flex ${m.sender === 'support' ? 'justify-end' : 'justify-start'}`}
+                              >
+                                <div
+                                  className={`max-w-md p-3.5 rounded-2xl text-xs leading-relaxed shadow-sm ${
+                                    m.sender === 'support'
+                                      ? 'bg-cyan-600 text-white font-medium rounded-tr-none'
+                                      : 'bg-[#151c2e] text-slate-200 border border-slate-700/80 rounded-tl-none'
+                                  }`}
+                                >
+                                  <div className="text-[10px] font-bold text-slate-300 mb-1">
+                                    {m.sender === 'support' ? 'Support Desk Agent (You)' : `Trader (${activeT.userId})`}
+                                  </div>
+                                  <div>{m.text}</div>
+                                  <div className={`text-[9px] mt-1.5 ${m.sender === 'support' ? 'text-cyan-100' : 'text-slate-500'}`}>
+                                    {new Date(m.timestamp).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Admin Reply Form */}
+                          <form onSubmit={handleSendAdminSupportReply} className="p-3.5 border-t border-slate-800 bg-[#121828] flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Type response as Support Specialist..."
+                              value={adminReplyText}
+                              onChange={(e) => setAdminReplyText(e.target.value)}
+                              className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-400"
+                            />
+                            <button
+                              type="submit"
+                              className="px-4 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black rounded-xl cursor-pointer transition shadow-md flex items-center gap-1.5"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Send Reply</span>
+                            </button>
+                          </form>
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-xs p-8 text-center">
+                      <LifeBuoy className="w-10 h-10 mb-2 text-slate-600 stroke-[1.5]" />
+                      <span>Select an inquiry from the left to view and answer trader messages.</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

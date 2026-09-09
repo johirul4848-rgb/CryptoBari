@@ -2,7 +2,7 @@ import React from 'react';
 import { CandlestickChart, BarChart3, History, Wallet, LifeBuoy, Settings, ShieldAlert, Globe } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
-export type NavTab = 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing';
+export type NavTab = 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing' | 'deposit' | 'withdrawal' | 'profile';
 
 interface SidebarProps {
   currentTab: NavTab;

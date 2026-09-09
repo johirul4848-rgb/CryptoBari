@@ -24,6 +24,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { getTraderTier } from '../../utils/tier';
+import { NavTab } from './Sidebar';
 
 interface HeaderProps {
   connectionStatus: ConnectionStatus;
@@ -37,8 +39,8 @@ interface HeaderProps {
   onOpenNotifications: () => void;
   onOpenProfile: () => void;
   unreadNotificationsCount: number;
-  currentTab?: 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing';
-  onSelectTab?: (tab: 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing') => void;
+  currentTab?: NavTab;
+  onSelectTab?: (tab: NavTab) => void;
   activeTradesCount?: number;
   onLogout?: () => void;
   userName?: string;
@@ -69,6 +71,8 @@ export const Header: React.FC<HeaderProps> = ({
 
   const accountDropdownRef = useRef<HTMLDivElement>(null);
   const navDropdownRef = useRef<HTMLDivElement>(null);
+
+  const tierInfo = getTraderTier(liveBalance);
 
   // Auto-close dropdowns when user clicks outside
   useEffect(() => {
@@ -143,11 +147,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             {connectionStatus === 'LIVE' ? 'BINANCE LIVE' : connectionStatus}
           </span>
-        </div>
-
-        {/* UTC Clock */}
-        <div className="hidden lg:block text-[11px] font-mono text-slate-500">
-          {utcTime}
         </div>
       </div>
 
@@ -329,40 +328,6 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Deposit Button (Bright Green 3D) */}
-        <button
-          id="header-deposit-btn"
-          onClick={() => {
-            sound.playClick();
-            onOpenDeposit();
-          }}
-          className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] transition-all cursor-pointer shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[3]" />
-          <span>Deposit</span>
-        </button>
-
-        {/* Profile Button / Symbol */}
-        <button
-          id="header-profile-symbol-btn"
-          onClick={() => {
-            sound.playClick();
-            onOpenProfile();
-          }}
-          className="flex items-center gap-1.5 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-[#12192b] hover:bg-[#18223a] border border-slate-800 hover:border-amber-400/50 text-slate-200 transition-all cursor-pointer shrink-0 shadow-sm"
-          title="User Profile & Verification"
-        >
-          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-yellow-300 text-slate-950 flex items-center justify-center font-black text-xs shadow-sm">
-            <User className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
-          </div>
-          <span className="hidden md:inline text-xs font-bold text-slate-200 truncate max-w-[100px]">
-            {userName.split(' ')[0]}
-          </span>
-          <span className="hidden sm:inline px-1 py-0.2 rounded text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
-            VIP
-          </span>
-        </button>
-
         {/* Notification Bell (Notice) */}
         <button
           id="header-notifications-btn"
@@ -381,8 +346,22 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
+        {/* Deposit Button (Bright Green 3D) */}
+        <button
+          id="header-deposit-btn"
+          onClick={() => {
+            sound.playClick();
+            onOpenDeposit();
+          }}
+          className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] transition-all cursor-pointer shrink-0"
+          title="Instant Deposit via Binance Pay"
+        >
+          <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[3]" />
+          <span>Deposit</span>
+        </button>
+
         {/* ========================================================================= */}
-        {/* TOP RIGHT CORNER: 3D COLORFUL FUNCTION MENU DROPDOWN */}
+        {/* CORNER: 3D COLORFUL FUNCTION MENU DROPDOWN (MOBILE & WEB USER-FRIENDLY)  */}
         {/* ========================================================================= */}
         <div className="relative shrink-0" ref={navDropdownRef}>
           <button
@@ -391,15 +370,15 @@ export const Header: React.FC<HeaderProps> = ({
               sound.playClick();
               setIsNavDropdownOpen(!isNavDropdownOpen);
             }}
-            className={`relative flex items-center gap-1.5 px-2.5 py-1 sm:py-1.5 rounded-xl transition-all cursor-pointer border shadow-md active:scale-95 ${
+            className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl transition-all cursor-pointer border shadow-md active:scale-95 ${
               isNavDropdownOpen
                 ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-300 text-slate-950 border-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.5)] font-black'
                 : 'bg-gradient-to-r from-[#172034] via-[#1c273e] to-[#151f33] text-slate-100 border-slate-700/80 hover:border-amber-400/60 hover:shadow-[0_0_15px_rgba(245,158,11,0.2)]'
             }`}
             title="All Functions Navigation Dropdown"
           >
-            <Menu className="w-4 h-4 stroke-[2.5]" />
-            <span className="hidden sm:inline font-extrabold text-xs">Menu</span>
+            <Menu className="w-4 h-4 stroke-[2.5] text-amber-400" />
+            <span className="font-extrabold text-xs tracking-wide">Menu</span>
 
             {/* Active trades badge */}
             {activeTradesCount > 0 && (
@@ -426,11 +405,11 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="truncate">
                     <div className="font-extrabold text-xs text-white truncate flex items-center gap-1.5">
                       <span>{userName}</span>
-                      <span className="px-1 py-0.2 rounded text-[9px] font-black bg-amber-500 text-slate-950">
-                        VIP
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] ${tierInfo.badgeClass}`}>
+                        {tierInfo.label}
                       </span>
                     </div>
-                    <div className="text-[10px] text-slate-400 font-mono">UID: #849204 • Verified</div>
+                    <div className="text-[10px] text-slate-400 font-mono">UID: #79438 • Live: ${liveBalance.toFixed(2)}</div>
                   </div>
                 </div>
 
@@ -495,7 +474,7 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                     <div className="text-left">
                       <div className="text-xs font-black text-amber-300">Withdrawal</div>
-                      <div className="text-[10px] text-slate-400">TRON, Binance Pay, Bank</div>
+                      <div className="text-[10px] text-slate-400">Binance Pay • Min $10 USD</div>
                     </div>
                   </div>
                   <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded">
@@ -593,7 +572,35 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </button>
 
-                {/* 6. Official Announcements & Notices */}
+                {/* 6. Wallet Overview */}
+                <button
+                  id="menu-func-wallet"
+                  onClick={() => {
+                    sound.playClick();
+                    if (onSelectTab) onSelectTab('wallet');
+                    setIsNavDropdownOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    currentTab === 'wallet'
+                      ? 'bg-gradient-to-r from-emerald-500/25 to-teal-600/15 border-emerald-400/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                      : 'bg-[#141b2a] hover:bg-emerald-500/10 border-slate-800 hover:border-emerald-500/30 text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-sm">
+                      <Wallet className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-xs font-bold text-white">Wallet & Balances</div>
+                      <div className="text-[10px] text-slate-400">Live & Demo balances</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
+                    Wallet
+                  </span>
+                </button>
+
+                {/* 7. Official Announcements & Notices */}
                 <button
                   id="menu-func-notices"
                   onClick={() => {

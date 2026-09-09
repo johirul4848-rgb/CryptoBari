@@ -1,22 +1,21 @@
 import React, { useState } from 'react';
-import { DrawingToolItem, IndicatorSettings } from '../../types';
 import {
   Sliders,
-  Minus,
+  ChevronDown,
+  Layers,
+  Activity,
   Plus,
   Trash2,
   X,
-  TrendingUp,
-  Activity,
-  ChevronDown,
-  Layers,
-  Eye,
-  EyeOff,
-  Crosshair,
   ArrowUp,
   ArrowDown,
-  HelpCircle,
+  TrendingUp,
+  Minus,
+  Check,
+  Crosshair,
+  Percent,
 } from 'lucide-react';
+import { IndicatorSettings, DrawingToolItem } from '../../types';
 import { sound } from '../../utils/audio';
 
 interface IndicatorsAndToolsMenuProps {
@@ -27,7 +26,7 @@ interface IndicatorsAndToolsMenuProps {
   onDeleteDrawingTool: (id: string) => void;
   onClearAllDrawingTools: () => void;
   indicators: IndicatorSettings;
-  onUpdateIndicators: (settings: Partial<IndicatorSettings>) => void;
+  onUpdateIndicators: (updates: Partial<IndicatorSettings>) => void;
 }
 
 export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
@@ -43,39 +42,32 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'drawings' | 'indicators'>('drawings');
 
-  // Count active tools & indicators
   const activeDrawingsCount = drawingTools.length;
-  const activeIndicatorsCount =
-    (indicators.sma.enabled ? 1 : 0) +
-    (indicators.ema.enabled ? 1 : 0) +
-    (indicators.bollinger.enabled ? 1 : 0) +
-    (indicators.rsi.enabled ? 1 : 0) +
-    (indicators.macd.enabled ? 1 : 0);
+  const activeIndicatorsCount = [
+    indicators.sma.enabled,
+    indicators.ema.enabled,
+    indicators.bollinger.enabled,
+    indicators.rsi.enabled,
+    indicators.macd?.enabled,
+  ].filter(Boolean).length;
+
   const totalActive = activeDrawingsCount + activeIndicatorsCount;
 
-  const colorPalette = [
-    { label: 'Amber', value: '#f59e0b' },
-    { label: 'Cyan', value: '#06b6d4' },
-    { label: 'Green', value: '#10b981' },
-    { label: 'Rose', value: '#f43f5e' },
-    { label: 'Purple', value: '#a855f7' },
-    { label: 'White', value: '#f8fafc' },
-  ];
-
+  // Add Horizontal Support/Resistance Line
   const handleAddHorizontalLine = (type: 'current' | 'support' | 'resistance') => {
     sound.playClick();
     let price = currentPrice;
-    let color = '#f59e0b';
-    let label = `Horizontal Line ${drawingTools.length + 1}`;
+    let label = 'Horizontal Line';
+    let color = '#f59e0b'; // Amber
 
     if (type === 'support') {
       price = currentPrice * 0.998;
-      color = '#10b981';
-      label = `Support Level ${drawingTools.length + 1}`;
+      label = 'Support Line';
+      color = '#10b981'; // Emerald
     } else if (type === 'resistance') {
       price = currentPrice * 1.002;
-      color = '#f43f5e';
-      label = `Resistance Level ${drawingTools.length + 1}`;
+      label = 'Resistance Line';
+      color = '#f43f5e'; // Rose
     }
 
     onAddDrawingTool({
@@ -87,26 +79,53 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
     });
   };
 
-  const handleNudgePrice = (id: string, currentVal: number, direction: 'up' | 'down') => {
+  // Add Fibonacci Retracement Tool ("fibola retchment tools")
+  const handleAddFibonacciRetracement = () => {
     sound.playClick();
-    const step = currentVal * 0.0005; // 0.05% step
-    const nextPrice = direction === 'up' ? currentVal + step : currentVal - step;
-    onUpdateDrawingTool(id, { price: Number(nextPrice.toFixed(4)) });
+    const highPrice = Number((currentPrice * 1.006).toFixed(4));
+    const lowPrice = Number((currentPrice * 0.994).toFixed(4));
+
+    onAddDrawingTool({
+      type: 'fibonacci',
+      price: Number(currentPrice.toFixed(4)),
+      highPrice,
+      lowPrice,
+      color: '#38bdf8', // Sky blue
+      label: 'Fibonacci Retracement (0% - 100%)',
+      lineWidth: 2,
+    });
   };
+
+  // Nudge line price manually
+  const handleNudgePrice = (id: string, currentP: number, dir: 'up' | 'down') => {
+    sound.playClick();
+    const step = currentP * 0.0005; // 0.05% step
+    const newPrice = dir === 'up' ? currentP + step : currentP - step;
+    onUpdateDrawingTool(id, { price: Number(newPrice.toFixed(4)) });
+  };
+
+  const colorPalette = [
+    { label: 'Amber', value: '#f59e0b' },
+    { label: 'Cyan', value: '#06b6d4' },
+    { label: 'Emerald', value: '#10b981' },
+    { label: 'Rose', value: '#f43f5e' },
+    { label: 'Purple', value: '#a855f7' },
+    { label: 'White', value: '#ffffff' },
+  ];
 
   return (
     <div className="relative">
-      {/* Quotex-Style Dropdown Toggle Button */}
+      {/* Trigger Button with 3D status badge */}
       <button
         id="indicators-tools-dropdown-btn"
         onClick={() => {
           sound.playClick();
           setIsOpen(!isOpen);
         }}
-        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-extrabold rounded border transition-all cursor-pointer shadow-sm ${
+        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-extrabold rounded-lg border transition-all cursor-pointer shadow-sm select-none ${
           isOpen || totalActive > 0
-            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]'
-            : 'bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 border-slate-700/80'
+            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+            : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700/80 hover:border-slate-600'
         }`}
       >
         <Sliders className="w-3.5 h-3.5 text-amber-400" />
@@ -126,25 +145,27 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
 
       {/* 3D Glassmorphic Dropdown Panel */}
       {isOpen && (
-        <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-1.5 w-80 sm:w-96 max-h-[75vh] overflow-y-auto custom-scrollbar bg-[#0f1422]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85),0_0_30px_rgba(255,255,255,0.03)] p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
+        <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-1.5 w-84 sm:w-96 max-h-[80vh] overflow-y-auto custom-scrollbar bg-[#0f1422]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85),0_0_30px_rgba(255,255,255,0.03)] p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
           {/* Header */}
-          <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-3">
+          <div className="flex items-center justify-between pb-2.5 border-b border-white/10 mb-3">
             <div className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-amber-400" />
+              <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                <Sliders className="w-3.5 h-3.5" />
+              </div>
               <span className="text-xs font-black text-slate-100 uppercase tracking-wider">
-                Quotex Tools & Indicators
+                Trading Tools & Indicators
               </span>
             </div>
             <button
               onClick={() => setIsOpen(false)}
               className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-white/5 cursor-pointer transition-colors"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
           {/* Navigation Tabs: Drawings vs Indicators */}
-          <div className="grid grid-cols-2 gap-1.5 p-1 bg-black/30 rounded-xl mb-3 border border-white/5 text-xs font-extrabold">
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-black/40 rounded-xl mb-3 border border-white/5 text-xs font-extrabold">
             <button
               onClick={() => {
                 sound.playClick();
@@ -177,56 +198,71 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
           </div>
 
           {/* ========================================================================= */}
-          {/* TAB 1: DRAWING TOOLS (HORIZONTAL LINES, SUPPORT, RESISTANCE)              */}
+          {/* TAB 1: DRAWING TOOLS (HORIZONTAL LINES, SUPPORT, RESISTANCE, FIBONACCI)     */}
           {/* ========================================================================= */}
           {activeTab === 'drawings' && (
             <div className="space-y-3">
-              {/* Quick Add Horizontal Lines Action Buttons */}
+              {/* Action Buttons to Add Tools */}
               <div>
-                <div className="text-[10px] uppercase font-extrabold text-slate-400 mb-1.5 tracking-wider">
-                  Add Lines to Chart
+                <div className="text-[10px] uppercase font-extrabold text-slate-400 mb-1.5 tracking-wider flex items-center justify-between">
+                  <span>Add Lines & Fibonacci</span>
+                  <span className="text-amber-400 font-normal">Interactive Chart Tools</span>
                 </div>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5 mb-1.5">
                   <button
                     onClick={() => handleAddHorizontalLine('current')}
                     className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 text-left transition-all cursor-pointer group"
                   >
                     <div className="flex items-center gap-1 text-amber-400 text-[11px] font-black">
                       <Plus className="w-3 h-3" />
-                      <span>Horizontal</span>
+                      <span>Horizontal Line</span>
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5">At current price</div>
+                    <div className="text-[9px] text-slate-400 mt-0.5">At current live price</div>
                   </button>
 
                   <button
+                    id="add-fibonacci-tool-btn"
+                    onClick={handleAddFibonacciRetracement}
+                    className="p-2 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 hover:border-sky-500/50 text-left transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-1 text-sky-400 text-[11px] font-black">
+                      <Percent className="w-3 h-3" />
+                      <span>Fibonacci Retrace</span>
+                    </div>
+                    <div className="text-[9px] text-slate-400 mt-0.5">0%, 23.6%, 38.2%, 50%, 61.8%</div>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
                     onClick={() => handleAddHorizontalLine('support')}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/40 text-left transition-all cursor-pointer group"
+                    className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-500/50 text-left transition-all cursor-pointer group"
                   >
                     <div className="flex items-center gap-1 text-emerald-400 text-[11px] font-black">
                       <ArrowUp className="w-3 h-3" />
-                      <span>Support</span>
+                      <span>Support Line</span>
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5">Below market</div>
+                    <div className="text-[9px] text-slate-400 mt-0.5">Below market baseline</div>
                   </button>
 
                   <button
                     onClick={() => handleAddHorizontalLine('resistance')}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-500/40 text-left transition-all cursor-pointer group"
+                    className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 hover:border-rose-500/50 text-left transition-all cursor-pointer group"
                   >
                     <div className="flex items-center gap-1 text-rose-400 text-[11px] font-black">
                       <ArrowDown className="w-3 h-3" />
-                      <span>Resistance</span>
+                      <span>Resistance Line</span>
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5">Above market</div>
+                    <div className="text-[9px] text-slate-400 mt-0.5">Above market resistance</div>
                   </button>
                 </div>
               </div>
 
-              {/* Active Lines List */}
+              {/* Active Tools List */}
               <div className="pt-2 border-t border-white/10">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">
-                    Active Horizontal Lines ({drawingTools.length})
+                    Active Chart Tools ({drawingTools.length})
                   </span>
                   {drawingTools.length > 0 && (
                     <button
@@ -247,7 +283,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                     <Crosshair className="w-6 h-6 text-slate-500 mx-auto mb-1.5 opacity-60" />
                     <p className="font-semibold text-slate-300">No active drawing lines</p>
                     <p className="text-[10px] text-slate-500 mt-0.5">
-                      Click "+ Horizontal" above to place a support/resistance line. You can drag it or nudge it with the arrows.
+                      Click Horizontal or Fibonacci above to place onto the chart. You can drag lines, adjust, or delete them anytime.
                     </p>
                   </div>
                 ) : (
@@ -264,8 +300,13 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                               style={{ backgroundColor: tool.color }}
                             />
                             <span className="text-xs font-bold text-slate-200">
-                              {tool.label || `Line ${idx + 1}`}
+                              {tool.label || (tool.type === 'fibonacci' ? 'Fibonacci Retracement' : `Line ${idx + 1}`)}
                             </span>
+                            {tool.type === 'fibonacci' && (
+                              <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 text-[9px] font-black border border-sky-500/30">
+                                FIB
+                              </span>
+                            )}
                           </div>
 
                           {/* Delete Cross (X) button */}
@@ -275,41 +316,57 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                               sound.playClick();
                               onDeleteDrawingTool(tool.id);
                             }}
-                            title="Delete this line (cross)"
+                            title="Delete this tool"
                             className="p-1 rounded-md text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                           >
                             <X className="w-4 h-4" />
                           </button>
                         </div>
 
-                        {/* Price Display & Manual Nudge Controls */}
-                        <div className="flex items-center justify-between bg-black/40 rounded-lg p-1.5 border border-white/5 text-xs">
-                          <div className="flex items-center gap-1 text-slate-400 text-[11px]">
-                            <span>Price:</span>
-                            <span className="font-mono font-bold text-slate-100">${tool.price}</span>
+                        {/* Price Display & Manual Controls */}
+                        {tool.type === 'fibonacci' ? (
+                          <div className="bg-black/40 rounded-lg p-2 border border-white/5 space-y-1 text-xs">
+                            <div className="flex items-center justify-between text-[11px] text-slate-300">
+                              <span>0.0% High:</span>
+                              <span className="font-mono font-bold text-sky-300">${tool.highPrice}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-300">
+                              <span>100.0% Low:</span>
+                              <span className="font-mono font-bold text-sky-300">${tool.lowPrice}</span>
+                            </div>
+                            <div className="text-[9px] text-slate-500 pt-0.5">
+                              Levels: 23.6%, 38.2%, 50%, 61.8% (Golden Pocket), 78.6%
+                            </div>
                           </div>
+                        ) : (
+                          <div className="flex items-center justify-between bg-black/40 rounded-lg p-1.5 border border-white/5 text-xs">
+                            <div className="flex items-center gap-1 text-slate-400 text-[11px]">
+                              <span>Price:</span>
+                              <span className="font-mono font-bold text-slate-100">${tool.price}</span>
+                            </div>
 
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-slate-500 mr-1">Move:</span>
-                            <button
-                              onClick={() => handleNudgePrice(tool.id, tool.price, 'down')}
-                              title="Move Down (manual)"
-                              className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-slate-200 flex items-center justify-center cursor-pointer active:scale-95"
-                            >
-                              <Minus className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => handleNudgePrice(tool.id, tool.price, 'up')}
-                              title="Move Up (manual)"
-                              className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-slate-200 flex items-center justify-center cursor-pointer active:scale-95"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-slate-500 mr-1">Move:</span>
+                              <button
+                                onClick={() => handleNudgePrice(tool.id, tool.price, 'down')}
+                                title="Move Down"
+                                className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-slate-200 flex items-center justify-center cursor-pointer active:scale-95"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => handleNudgePrice(tool.id, tool.price, 'up')}
+                                title="Move Up"
+                                className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-slate-200 flex items-center justify-center cursor-pointer active:scale-95"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Color Selector */}
-                        <div className="flex items-center gap-1.5 pt-1">
+                        <div className="flex items-center gap-1.5 pt-0.5">
                           <span className="text-[10px] text-slate-400 mr-1">Color:</span>
                           {colorPalette.map((cp) => (
                             <button
@@ -341,7 +398,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-slate-100">Simple Moving Average (SMA)</div>
-                    <div className="text-[10px] text-slate-400">Trend smoothing line</div>
+                    <div className="text-[10px] text-slate-400">Trend baseline line</div>
                   </div>
                   <button
                     onClick={() => {
@@ -414,7 +471,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-slate-100">Exponential Moving Average (EMA)</div>
-                    <div className="text-[10px] text-slate-400">Fast reaction to recent candles</div>
+                    <div className="text-[10px] text-slate-400">Fast reaction smoothing</div>
                   </div>
                   <button
                     onClick={() => {
@@ -441,7 +498,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                         <button
                           onClick={() =>
                             onUpdateIndicators({
-                              ema: { ...indicators.ema, period: Math.max(2, indicators.ema.period - 5) },
+                              ema: { ...indicators.ema, period: Math.max(2, indicators.ema.period - 2) },
                             })
                           }
                           className="text-slate-400 hover:text-slate-200 cursor-pointer"
@@ -454,7 +511,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                         <button
                           onClick={() =>
                             onUpdateIndicators({
-                              ema: { ...indicators.ema, period: indicators.ema.period + 5 },
+                              ema: { ...indicators.ema, period: indicators.ema.period + 2 },
                             })
                           }
                           className="text-slate-400 hover:text-slate-200 cursor-pointer"
@@ -543,16 +600,16 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
                     onClick={() => {
                       sound.playClick();
                       onUpdateIndicators({
-                        macd: { ...indicators.macd, enabled: !indicators.macd.enabled },
+                        macd: { ...indicators.macd, enabled: !indicators.macd?.enabled },
                       });
                     }}
                     className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-all ${
-                      indicators.macd.enabled
+                      indicators.macd?.enabled
                         ? 'bg-sky-500 text-slate-950 shadow-sm'
                         : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                     }`}
                   >
-                    {indicators.macd.enabled ? 'ENABLED' : 'OFF'}
+                    {indicators.macd?.enabled ? 'ENABLED' : 'OFF'}
                   </button>
                 </div>
               </div>
