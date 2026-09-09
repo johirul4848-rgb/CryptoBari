@@ -22,6 +22,9 @@ import {
   LogOut,
   Sparkles,
   Zap,
+  Users,
+  Gift,
+  ArrowRight,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { getTraderTier } from '../../utils/tier';
@@ -346,14 +349,14 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* Deposit Button (Bright Green 3D) */}
+        {/* Deposit Button (Hidden on Mobile, Visible on Tablet & Desktop) */}
         <button
           id="header-deposit-btn"
           onClick={() => {
             sound.playClick();
             onOpenDeposit();
           }}
-          className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] transition-all cursor-pointer shrink-0"
+          className="hidden sm:flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] transition-all cursor-pointer shrink-0"
           title="Instant Deposit via Binance Pay"
         >
           <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[3]" />
@@ -393,320 +396,450 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </button>
 
-          {/* 3D COLORFUL FUNCTION NAVIGATION DROPDOWN */}
+          {/* 3D COLORFUL FUNCTION NAVIGATION (FULL DISPLAY ON MOBILE, FLOATING DROPDOWN ON DESKTOP) */}
+          {/* ========================================================================= */}
+          {/* RIGHT SIDEBAR FUNCTION DRAWER WITH BLANK BODY BACKDROP OVERLAY             */}
+          {/* ========================================================================= */}
           {isNavDropdownOpen && (
-            <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 max-h-[85vh] overflow-y-auto custom-scrollbar bg-[#0b101c]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_30px_70px_rgba(0,0,0,0.95),0_0_30px_rgba(255,255,255,0.03)] p-3 z-50 animate-in fade-in slide-in-from-top-3 duration-200 select-none">
-              {/* User Profile Mini Header */}
-              <div className="p-3 rounded-xl bg-gradient-to-br from-[#161f33] to-[#121929] border border-slate-700/80 shadow-inner mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-200 text-slate-950 flex items-center justify-center font-black shadow-md ring-2 ring-amber-400/40">
-                    <User className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-                  </div>
-                  <div className="truncate">
-                    <div className="font-extrabold text-xs text-white truncate flex items-center gap-1.5">
-                      <span>{userName}</span>
-                      <span className={`px-1.5 py-0.2 rounded text-[9px] ${tierInfo.badgeClass}`}>
-                        {tierInfo.label}
-                      </span>
+            <>
+              {/* Full-Screen Blank Body Backdrop: Dims & Blurs Website, Click to Clear */}
+              <div
+                id="function-menu-backdrop"
+                onClick={() => {
+                  sound.playClick();
+                  setIsNavDropdownOpen(false);
+                }}
+                className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md transition-all duration-300 cursor-pointer animate-in fade-in"
+                title="Click anywhere on the blank body to close and return to website"
+              />
+
+              {/* Right Side Bar Function Drawer */}
+              <aside
+                id="function-menu-right-sidebar"
+                className="fixed inset-y-0 right-0 z-50 w-full sm:w-[440px] md:w-[470px] max-w-full bg-[#080d19] border-l border-white/10 shadow-[-25px_0_75px_rgba(0,0,0,0.95)] flex flex-col animate-in slide-in-from-right duration-300 select-none overflow-hidden"
+              >
+                {/* Drawer Top Navigation Bar */}
+                <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/10 bg-[#0c1220]/90 shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <Logo size="sm" />
+                    <div>
+                      <div className="text-sm font-black text-white tracking-wide flex items-center gap-1.5">
+                        <span>Platform Menu</span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.9)] animate-pulse" />
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">CryptoBari Financial Terminal</div>
                     </div>
-                    <div className="text-[10px] text-slate-400 font-mono">UID: #79438 • Live: ${liveBalance.toFixed(2)}</div>
                   </div>
+
+                  {/* Back to Website / Clear Button */}
+                  <button
+                    id="drawer-back-to-website-btn"
+                    onClick={() => {
+                      sound.playClick();
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-black transition-all cursor-pointer active:scale-95 shadow-md group"
+                    title="Close Menu and Return to Website"
+                  >
+                    <span>Back / Clear</span>
+                    <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+                  </button>
                 </div>
 
-                <button
-                  id="dropdown-open-profile-btn"
-                  onClick={() => {
-                    sound.playClick();
-                    setIsNavDropdownOpen(false);
-                    onOpenProfile();
-                  }}
-                  className="px-2.5 py-1 text-[10px] font-bold bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 rounded-lg border border-amber-500/40 transition-all cursor-pointer"
-                >
-                  Profile
-                </button>
-              </div>
-
-              {/* Navigation Section Title */}
-              <div className="text-[10px] uppercase font-black text-slate-400 px-1 mb-2 tracking-wider flex items-center justify-between">
-                <span>Functions Menu</span>
-                <span className="text-emerald-400 text-[9px] font-mono">Instant Access</span>
-              </div>
-
-              {/* 3D Colorful Exact Function Items */}
-              <div className="space-y-1.5">
-                {/* 1. Deposit */}
-                <button
-                  id="menu-func-deposit"
-                  onClick={() => {
-                    sound.playClick();
-                    setIsNavDropdownOpen(false);
-                    onOpenDeposit();
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 rounded-xl border border-emerald-500/40 bg-gradient-to-r from-emerald-500/20 to-teal-600/10 hover:from-emerald-500/30 hover:to-teal-600/20 text-white transition-all cursor-pointer shadow-sm"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/25 border border-emerald-500/50 flex items-center justify-center text-emerald-400 shadow-sm">
-                      <Plus className="w-4 h-4 stroke-[3]" />
+                {/* Trader Profile Banner */}
+                <div className="p-3.5 mx-4 mt-4 rounded-2xl bg-gradient-to-br from-[#151e33] to-[#0e1526] border border-slate-700/80 shadow-inner shrink-0 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-300 text-slate-950 flex items-center justify-center font-black shadow-lg ring-2 ring-amber-400/40 shrink-0">
+                      <User className="w-5 h-5 text-slate-950 stroke-[2.5]" />
                     </div>
-                    <div className="text-left">
-                      <div className="text-xs font-black text-emerald-400">Deposit</div>
-                      <div className="text-[10px] text-slate-400">Add funds to Live Wallet</div>
+                    <div className="truncate">
+                      <div className="font-black text-sm text-white truncate flex items-center gap-2">
+                        <span>{userName}</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${tierInfo.badgeClass}`}>
+                          {tierInfo.label}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-300 font-mono mt-0.5 flex items-center gap-2">
+                        <span>UID: #79438</span>
+                        <span className="text-slate-500">•</span>
+                        <span className="text-emerald-400 font-bold">Live: ${liveBalance.toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
-                  <span className="text-[10px] font-black text-slate-950 bg-emerald-400 px-2 py-0.5 rounded-md shadow">
-                    Top Up
-                  </span>
-                </button>
 
-                {/* 2. Withdrawal */}
-                <button
-                  id="menu-func-withdrawal"
-                  onClick={() => {
-                    sound.playClick();
-                    setIsNavDropdownOpen(false);
-                    onOpenWithdrawal();
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 to-yellow-600/10 hover:from-amber-500/25 hover:to-yellow-600/20 text-white transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-sm">
-                      <ArrowDownLeft className="w-4 h-4 stroke-[2.5]" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-black text-amber-300">Withdrawal</div>
-                      <div className="text-[10px] text-slate-400">Binance Pay • Min $10 USD</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded">
-                    Payout
-                  </span>
-                </button>
+                  <button
+                    id="dropdown-open-profile-btn"
+                    onClick={() => {
+                      sound.playClick();
+                      setIsNavDropdownOpen(false);
+                      onOpenProfile();
+                    }}
+                    className="px-3.5 py-1.5 text-xs font-black bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 rounded-xl border border-amber-500/40 transition-all cursor-pointer shrink-0 shadow-sm active:scale-95"
+                  >
+                    Profile
+                  </button>
+                </div>
 
-                {/* 3. Trade Terminal */}
-                <button
-                  id="menu-func-trade"
-                  onClick={() => {
-                    sound.playClick();
-                    if (onSelectTab) onSelectTab('trade');
-                    setIsNavDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    currentTab === 'trade'
-                      ? 'bg-gradient-to-r from-cyan-500/25 to-blue-600/15 border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.3)]'
-                      : 'bg-[#141b2a] hover:bg-cyan-500/10 border-slate-800 hover:border-cyan-500/30 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-sm">
-                      <CandlestickChart className="w-4 h-4" />
+                {/* Scrollable Function Cards List (Smart Horizontal Gradient Styling) */}
+                <div className="flex-1 p-4 space-y-2.5 overflow-y-auto custom-scrollbar">
+                  {/* 1. Trade Terminal */}
+                  <button
+                    id="menu-func-trade"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('trade');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#f43f5e] via-[#e11d48] to-[#9333ea] text-white shadow-[0_6px_20px_rgba(244,63,94,0.35)] hover:shadow-[0_10px_28px_rgba(244,63,94,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <CandlestickChart className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm flex items-center gap-1.5">
+                          <span>Trade Terminal</span>
+                          {currentTab === 'trade' && (
+                            <span className="w-2 h-2 rounded-full bg-white shadow-[0_0_6px_#fff] animate-pulse" />
+                          )}
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Live & Practice Binary Trading
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Trade Terminal</div>
-                      <div className="text-[10px] text-slate-400">Live candlestick charts</div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {activeTradesCount > 0 ? (
+                        <span className="w-6 h-6 rounded-full bg-white text-rose-600 font-black text-xs flex items-center justify-center shadow-md animate-pulse">
+                          {activeTradesCount}
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                          Terminal
+                        </span>
+                      )}
+                      <ArrowRight className="w-4 h-4 text-white/80" />
                     </div>
-                  </div>
-                  {activeTradesCount > 0 ? (
-                    <span className="w-5 h-5 rounded-full bg-cyan-500 text-slate-950 font-black text-[10px] flex items-center justify-center animate-pulse">
-                      {activeTradesCount}
+                  </button>
+
+                  {/* 2. Referral Program (HOT 20% Commission + $10 Bonus) */}
+                  <button
+                    id="menu-func-referral"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('referral');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#f59e0b] via-[#ea580c] to-[#c2410c] text-white shadow-[0_6px_20px_rgba(245,158,11,0.35)] hover:shadow-[0_10px_28px_rgba(245,158,11,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <Users className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm flex items-center gap-1.5">
+                          <span>Referral Partner</span>
+                          <span className="px-1.5 py-0.5 rounded-full bg-white text-amber-700 font-black text-[9px] tracking-wide shadow-sm">
+                            HOT 20%
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Earn 20% Commission • $10 Bonus
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Earn
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 3. Instant Deposit */}
+                  <button
+                    id="menu-func-deposit"
+                    onClick={() => {
+                      sound.playClick();
+                      onOpenDeposit();
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#10b981] via-[#059669] to-[#0f766e] text-white shadow-[0_6px_20px_rgba(16,185,129,0.35)] hover:shadow-[0_10px_28px_rgba(16,185,129,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <Plus className="w-4 h-4 stroke-[3]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          Instant Deposit
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Binance Pay • Bkash • Nagad • 0% Fee
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Top Up
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 4. Fast Withdrawal */}
+                  <button
+                    id="menu-func-withdrawal"
+                    onClick={() => {
+                      sound.playClick();
+                      onOpenWithdrawal();
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#06b6d4] via-[#0284c7] to-[#2563eb] text-white shadow-[0_6px_20px_rgba(6,182,212,0.35)] hover:shadow-[0_10px_28px_rgba(6,182,212,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          Fast Withdrawal
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Instant Payouts • Min $10 USD
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Payout
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 5. Markets Watchlist */}
+                  <button
+                    id="menu-func-markets"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('markets');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#8b5cf6] via-[#7c3aed] to-[#4f46e5] text-white shadow-[0_6px_20px_rgba(139,92,246,0.35)] hover:shadow-[0_10px_28px_rgba(139,92,246,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <BarChart3 className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          Markets Watchlist
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Crypto • Forex • Commodities • OTC
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Stream
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 6. Trading History */}
+                  <button
+                    id="menu-func-history"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('history');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#3b82f6] via-[#2563eb] to-[#1d4ed8] text-white shadow-[0_6px_20px_rgba(59,130,246,0.35)] hover:shadow-[0_10px_28px_rgba(59,130,246,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <History className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          Trading History
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Past Orders, Win Rates & Analytics
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Records
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 7. Wallet & Balances */}
+                  <button
+                    id="menu-func-wallet"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('wallet');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#14b8a6] via-[#0d9488] to-[#0369a1] text-white shadow-[0_6px_20px_rgba(20,184,166,0.35)] hover:shadow-[0_10px_28px_rgba(20,184,166,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <Wallet className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          Wallet & Balances
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Live: ${liveBalance.toFixed(2)} • Demo: ${demoBalance.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Wallet
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 8. Announcements & Notices */}
+                  <button
+                    id="menu-func-notices"
+                    onClick={() => {
+                      sound.playClick();
+                      onOpenNotifications();
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#fb923c] via-[#f97316] to-[#dc2626] text-white shadow-[0_6px_20px_rgba(251,146,60,0.35)] hover:shadow-[0_10px_28px_rgba(251,146,60,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <Bell className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm flex items-center gap-1.5">
+                          <span>Official Notices</span>
+                          {unreadNotificationsCount > 0 && (
+                            <span className="px-1.5 py-0.2 bg-white text-orange-600 rounded-full font-black text-[10px]">
+                              {unreadNotificationsCount}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Platform News, Promos & Security
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        News
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 9. 24/7 Live Support */}
+                  <button
+                    id="menu-func-support"
+                    onClick={() => {
+                      sound.playClick();
+                      if (onSelectTab) onSelectTab('support');
+                      setIsNavDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-[#d946ef] via-[#c026d3] to-[#9333ea] text-white shadow-[0_6px_20px_rgba(217,70,239,0.35)] hover:shadow-[0_10px_28px_rgba(217,70,239,0.5)] hover:scale-[1.015] active:scale-[0.98] transition-all duration-200 cursor-pointer text-left border border-white/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-inner shrink-0">
+                        <LifeBuoy className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white tracking-wide drop-shadow-sm">
+                          24/7 Live Support
+                        </div>
+                        <div className="text-[11px] font-semibold text-white/90 mt-0.5">
+                          Customer Care • Help Desk • FAQ
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white/20 backdrop-blur-sm border border-white/25 text-white font-black text-[10px] tracking-wider uppercase shadow-sm">
+                        Online
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-white/80" />
+                    </div>
+                  </button>
+
+                  {/* 10. Sign Out */}
+                  <button
+                    id="menu-func-logout"
+                    onClick={() => {
+                      sound.playLose();
+                      setIsNavDropdownOpen(false);
+                      if (onLogout) {
+                        onLogout();
+                      } else if (onSelectTab) {
+                        onSelectTab('landing');
+                      }
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl border border-rose-500/40 bg-gradient-to-r from-[#1c1424] to-[#121018] hover:border-rose-500/70 text-rose-300 transition-all cursor-pointer mt-2 shadow-md hover:shadow-lg hover:scale-[1.01] active:scale-[0.98]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shadow-sm shrink-0">
+                        <LogOut className="w-5 h-5" />
+                      </div>
+                      <div className="text-left">
+                        <div className="text-sm font-black text-white">Sign Out</div>
+                        <div className="text-[11px] text-rose-400/80 font-medium">Exit trader session safely</div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black text-rose-300 bg-rose-500/20 border border-rose-500/30 px-3 py-1 rounded-xl uppercase tracking-wider">
+                      Exit
                     </span>
-                  ) : (
-                    <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/15 px-1.5 py-0.5 rounded">
-                      Live
-                    </span>
-                  )}
-                </button>
+                  </button>
+                </div>
 
-                {/* 4. Markets Watchlist */}
-                <button
-                  id="menu-func-markets"
-                  onClick={() => {
-                    sound.playClick();
-                    if (onSelectTab) onSelectTab('markets');
-                    setIsNavDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    currentTab === 'markets'
-                      ? 'bg-gradient-to-r from-sky-500/25 to-blue-600/15 border-sky-400/60 shadow-[0_0_20px_rgba(14,165,233,0.3)]'
-                      : 'bg-[#141b2a] hover:bg-sky-500/10 border-slate-800 hover:border-sky-500/30 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400 shadow-sm">
-                      <BarChart3 className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Markets Watchlist</div>
-                      <div className="text-[10px] text-slate-400">Binance Spot tickers</div>
-                    </div>
+                {/* Bottom Drawer Quick Actions & Status */}
+                <div className="p-4 border-t border-white/10 bg-[#0c1220]/90 shrink-0">
+                  <div className="flex items-center justify-between text-xs text-slate-300 mb-2">
+                    <button
+                      onClick={() => {
+                        sound.playClick();
+                        onResetDemo();
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-amber-500/20 text-slate-300 hover:text-amber-400 border border-white/5 hover:border-amber-500/30 cursor-pointer transition-all active:scale-95 font-bold"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reset Demo $10k</span>
+                    </button>
+
+                    <button
+                      onClick={handleToggleSound}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/5 cursor-pointer transition-all active:scale-95 font-bold"
+                    >
+                      {isSoundOn ? (
+                        <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <VolumeX className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                      <span>{isSoundOn ? 'Sound On' : 'Muted'}</span>
+                    </button>
                   </div>
-                  <span className="text-[10px] font-bold text-sky-400 bg-sky-500/15 px-1.5 py-0.5 rounded">
-                    Stream
-                  </span>
-                </button>
 
-                {/* 5. Trading History */}
-                <button
-                  id="menu-func-history"
-                  onClick={() => {
-                    sound.playClick();
-                    if (onSelectTab) onSelectTab('history');
-                    setIsNavDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    currentTab === 'history'
-                      ? 'bg-gradient-to-r from-purple-500/25 to-indigo-600/15 border-purple-400/60 shadow-[0_0_20px_rgba(168,85,247,0.3)]'
-                      : 'bg-[#141b2a] hover:bg-purple-500/10 border-slate-800 hover:border-purple-500/30 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shadow-sm">
-                      <History className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Trading History</div>
-                      <div className="text-[10px] text-slate-400">Settled orders & profits</div>
-                    </div>
+                  <div className="text-center text-[10px] text-slate-500 font-mono">
+                    256-Bit SSL Encrypted Financial Trading • CryptoBari v2.4
                   </div>
-                  <span className="text-[10px] font-bold text-purple-400 bg-purple-500/15 px-1.5 py-0.5 rounded">
-                    History
-                  </span>
-                </button>
-
-                {/* 6. Wallet Overview */}
-                <button
-                  id="menu-func-wallet"
-                  onClick={() => {
-                    sound.playClick();
-                    if (onSelectTab) onSelectTab('wallet');
-                    setIsNavDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    currentTab === 'wallet'
-                      ? 'bg-gradient-to-r from-emerald-500/25 to-teal-600/15 border-emerald-400/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
-                      : 'bg-[#141b2a] hover:bg-emerald-500/10 border-slate-800 hover:border-emerald-500/30 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-sm">
-                      <Wallet className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Wallet & Balances</div>
-                      <div className="text-[10px] text-slate-400">Live & Demo balances</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
-                    Wallet
-                  </span>
-                </button>
-
-                {/* 7. Official Announcements & Notices */}
-                <button
-                  id="menu-func-notices"
-                  onClick={() => {
-                    sound.playClick();
-                    setIsNavDropdownOpen(false);
-                    onOpenNotifications();
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 rounded-xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/15 to-blue-600/10 hover:from-cyan-500/25 hover:to-blue-600/20 text-slate-200 transition-all cursor-pointer shadow-sm"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-sm">
-                      <Bell className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Announcements & Notices</div>
-                      <div className="text-[10px] text-slate-400">Official broker updates & promos</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/20 px-2 py-0.5 rounded">
-                    Live
-                  </span>
-                </button>
-
-                {/* 7. Support 24/7 */}
-                <button
-                  id="menu-func-support"
-                  onClick={() => {
-                    sound.playClick();
-                    if (onSelectTab) onSelectTab('support');
-                    setIsNavDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    currentTab === 'support'
-                      ? 'bg-gradient-to-r from-teal-500/25 to-emerald-600/15 border-teal-400/60 shadow-[0_0_20px_rgba(20,184,166,0.3)]'
-                      : 'bg-[#141b2a] hover:bg-teal-500/10 border-slate-800 hover:border-teal-500/30 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-400 shadow-sm">
-                      <LifeBuoy className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Support 24/7</div>
-                      <div className="text-[10px] text-slate-400">Live chat & help desk</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-teal-400 bg-teal-500/15 px-1.5 py-0.5 rounded">
-                    24/7
-                  </span>
-                </button>
-
-                {/* 7. Sign Out */}
-                <button
-                  id="menu-func-logout"
-                  onClick={() => {
-                    sound.playLose();
-                    setIsNavDropdownOpen(false);
-                    if (onLogout) {
-                      onLogout();
-                    } else if (onSelectTab) {
-                      onSelectTab('landing');
-                    }
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 rounded-xl border border-rose-500/40 bg-gradient-to-r from-rose-500/15 to-rose-600/10 hover:from-rose-500/25 hover:to-rose-600/20 text-rose-300 transition-all cursor-pointer mt-1"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shadow-sm">
-                      <LogOut className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="text-xs font-bold text-white">Sign Out</div>
-                      <div className="text-[10px] text-rose-400/80">Exit trader session</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-rose-400 bg-rose-500/20 px-2 py-0.5 rounded">
-                    Exit
-                  </span>
-                </button>
-              </div>
-
-              {/* Bottom Quick Tools */}
-              <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-xs text-slate-400">
-                <button
-                  onClick={() => {
-                    sound.playClick();
-                    onResetDemo();
-                  }}
-                  className="flex items-center gap-1 hover:text-amber-400 cursor-pointer transition-colors"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reset Demo $10k</span>
-                </button>
-
-                <button
-                  onClick={handleToggleSound}
-                  className="flex items-center gap-1 hover:text-slate-200 cursor-pointer transition-colors"
-                >
-                  {isSoundOn ? (
-                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : (
-                    <VolumeX className="w-3.5 h-3.5 text-slate-500" />
-                  )}
-                  <span>{isSoundOn ? 'Sound On' : 'Muted'}</span>
-                </button>
-              </div>
-            </div>
+                </div>
+              </aside>
+            </>
           )}
         </div>
       </div>

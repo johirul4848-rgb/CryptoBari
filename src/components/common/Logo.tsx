@@ -8,15 +8,15 @@ interface LogoProps {
 
 export const Logo: React.FC<LogoProps> = ({ size = 'md', showText = true, className = '' }) => {
   const iconDimensions = {
-    sm: 'w-7 h-7',
-    md: 'w-9 h-9',
-    lg: 'w-12 h-12',
+    sm: 'w-6 h-6 sm:w-7 sm:h-7',
+    md: 'w-6 h-6 sm:w-7 sm:h-7 md:w-9 md:h-9',
+    lg: 'w-10 h-10 sm:w-12 sm:h-12',
   }[size];
 
   const textSize = {
-    sm: 'text-base',
-    md: 'text-xl',
-    lg: 'text-2xl',
+    sm: 'text-xs sm:text-base',
+    md: 'text-xs sm:text-base md:text-xl',
+    lg: 'text-lg sm:text-2xl',
   }[size];
 
   return (

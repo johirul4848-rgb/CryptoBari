@@ -1,8 +1,8 @@
 import React from 'react';
-import { CandlestickChart, BarChart3, History, Wallet, LifeBuoy, Settings, ShieldAlert, Globe } from 'lucide-react';
+import { CandlestickChart, BarChart3, History, Wallet, LifeBuoy, Settings, ShieldAlert, Globe, Users } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
-export type NavTab = 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing' | 'deposit' | 'withdrawal' | 'profile';
+export type NavTab = 'trade' | 'referral' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing' | 'deposit' | 'withdrawal' | 'profile';
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -17,6 +17,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems = [
     { id: 'trade', label: 'Trade', icon: CandlestickChart, badge: activeTradesCount > 0 ? activeTradesCount : null },
+    { id: 'referral', label: 'Referral', icon: Users, badge: '20%' },
     { id: 'markets', label: 'Markets', icon: BarChart3 },
     { id: 'history', label: 'History', icon: History },
     { id: 'wallet', label: 'Wallet', icon: Wallet },

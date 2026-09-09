@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sliders,
   ChevronDown,
@@ -41,6 +41,20 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'drawings' | 'indicators'>('drawings');
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside on desktop
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
 
   const activeDrawingsCount = drawingTools.length;
   const activeIndicatorsCount = [
@@ -114,7 +128,7 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
   ];
 
   return (
-    <div className="relative">
+    <div className="relative" ref={menuRef}>
       {/* Trigger Button with 3D status badge */}
       <button
         id="indicators-tools-dropdown-btn"
@@ -143,22 +157,34 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
         />
       </button>
 
-      {/* 3D Glassmorphic Dropdown Panel */}
+      {/* Backdrop for Mobile Outside Dismiss */}
       {isOpen && (
-        <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-1.5 w-84 sm:w-96 max-h-[80vh] overflow-y-auto custom-scrollbar bg-[#0f1422]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85),0_0_30px_rgba(255,255,255,0.03)] p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm sm:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+
+      {/* Modern Responsive Panel (Docked bottom sheet on mobile, anchored left dropdown on web) */}
+      {isOpen && (
+        <div className="fixed inset-x-2 bottom-3 sm:fixed-none sm:absolute sm:top-full sm:left-0 sm:right-auto sm:mt-1.5 w-auto sm:w-[410px] max-h-[82vh] overflow-y-auto custom-scrollbar bg-[#0c1220]/98 backdrop-blur-2xl border border-slate-700/80 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.95)] p-3.5 sm:p-4 z-50 animate-in fade-in slide-in-from-bottom-2 sm:slide-in-from-top-2 duration-150 select-none">
           {/* Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-white/10 mb-3">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-                <Sliders className="w-3.5 h-3.5" />
+              <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                <Sliders className="w-4 h-4" />
               </div>
-              <span className="text-xs font-black text-slate-100 uppercase tracking-wider">
-                Trading Tools & Indicators
-              </span>
+              <div>
+                <span className="text-xs font-black text-slate-100 uppercase tracking-wider block">
+                  Tools & Indicators
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">Interactive Chart Analysis</span>
+              </div>
             </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-white/5 cursor-pointer transition-colors"
+              className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors"
+              title="Close Panel"
             >
               <X className="w-4 h-4" />
             </button>

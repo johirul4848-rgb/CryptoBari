@@ -34,6 +34,7 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminAuthModal } from './components/admin/AdminAuthModal';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { ProfileModal } from './components/profile/ProfileModal';
+import { ReferralPage } from './components/referral/ReferralPage';
 import { PlatformOverview } from './components/common/PlatformOverview';
 import { HomePage } from './components/home/HomePage';
 import { AuthModal } from './components/auth/AuthModal';
@@ -623,6 +624,36 @@ export const App: React.FC = () => {
                 onPlaceTrade={handlePlaceTrade}
               />
             </div>
+          )}
+
+          {currentTab === 'referral' && (
+            <ReferralPage
+              liveBalance={wallet.liveBalance}
+              userName={profile.name}
+              userEmail={profile.email}
+              onBackToTrade={() => {
+                sound.playClick();
+                setCurrentTab('trade');
+              }}
+              onConvertToLive={(amount) => {
+                setWallet((prev) => ({
+                  ...prev,
+                  liveBalance: Number((prev.liveBalance + amount).toFixed(2)),
+                }));
+                setTransactions((prev) => [
+                  {
+                    id: `TX-REF-${Date.now().toString().slice(-6)}`,
+                    type: 'DEPOSIT',
+                    amount,
+                    currency: 'USD',
+                    status: 'COMPLETED',
+                    timestamp: Date.now(),
+                    description: `Referral Commission Transfer to Live Balance (+$${amount.toFixed(2)})`,
+                  },
+                  ...prev,
+                ]);
+              }}
+            />
           )}
 
           {currentTab === 'markets' && (

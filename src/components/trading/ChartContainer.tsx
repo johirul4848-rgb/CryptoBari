@@ -135,8 +135,21 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   // Chart Background Grid Function State ('crisp' | 'dense' | 'dotted' | 'off')
   type ChartGridMode = 'crisp' | 'dense' | 'dotted' | 'off';
   const [gridMode, setGridMode] = useState<ChartGridMode>('crisp');
+  const lastActiveGridModeRef = useRef<ChartGridMode>('crisp');
   const [isGridDropdownOpen, setIsGridDropdownOpen] = useState(false);
   const gridDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Toggle Grid ON / OFF directly
+  const handleToggleGrid = () => {
+    sound.playClick();
+    if (gridMode === 'off') {
+      const restoreMode = lastActiveGridModeRef.current !== 'off' ? lastActiveGridModeRef.current : 'crisp';
+      setGridMode(restoreMode);
+    } else {
+      lastActiveGridModeRef.current = gridMode;
+      setGridMode('off');
+    }
+  };
 
   // Close grid dropdown on click outside
   useEffect(() => {
@@ -976,61 +989,108 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           {/* Interactive User-Selectable UTC Timezone Clock & Selector */}
           <UtcTimeSelector />
 
-          {/* Chart Background Grid Function Selector (Crisp / Dense / Dotted / Off) */}
-          <div className="relative" ref={gridDropdownRef}>
+          {/* Chart Background Grid Function Selector with 1-Click ON/OFF Toggle */}
+          <div className="relative flex items-center" ref={gridDropdownRef}>
+            {/* Direct 1-Click Toggle Button */}
             <button
-              id="chart-grid-mode-btn"
-              onClick={() => {
-                sound.playClick();
-                setIsGridDropdownOpen(!isGridDropdownOpen);
-              }}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold border transition-all cursor-pointer ${
+              id="chart-grid-toggle-btn"
+              onClick={handleToggleGrid}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-l text-xs font-bold border transition-all cursor-pointer select-none active:scale-95 ${
                 gridMode !== 'off'
-                  ? 'bg-slate-800/90 text-amber-400 border-amber-500/40 hover:bg-slate-800 shadow-sm'
-                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                  ? 'bg-gradient-to-r from-amber-500/20 to-amber-600/10 text-amber-300 border-amber-500/40 hover:bg-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]'
+                  : 'bg-slate-900/90 text-slate-400 border-slate-700/80 hover:text-slate-200 hover:bg-slate-800'
               }`}
-              title="Chart Background Grid Function"
+              title={gridMode !== 'off' ? 'Click to turn Grid OFF' : 'Click to turn Grid ON'}
             >
-              <Grid className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline capitalize">Grid: {gridMode}</span>
-              <ChevronDown
-                className={`w-3 h-3 transition-transform duration-150 ${
-                  isGridDropdownOpen ? 'rotate-180 text-amber-400' : 'text-slate-500'
+              <Grid className={`w-3.5 h-3.5 ${gridMode !== 'off' ? 'text-amber-400' : 'text-slate-500'}`} />
+              <span className="capitalize text-xs">
+                Grid: <span className={gridMode !== 'off' ? 'text-emerald-400 font-extrabold' : 'text-rose-400 font-bold'}>{gridMode === 'off' ? 'OFF' : gridMode}</span>
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  gridMode !== 'off'
+                    ? 'bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse'
+                    : 'bg-rose-500/80'
                 }`}
               />
             </button>
 
+            {/* Dropdown Chevron Trigger for Grid Styles */}
+            <button
+              id="chart-grid-options-chevron-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                sound.playClick();
+                setIsGridDropdownOpen(!isGridDropdownOpen);
+              }}
+              className={`px-1.5 py-1 rounded-r border-y border-r text-xs transition-all cursor-pointer ${
+                gridMode !== 'off'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                  : 'bg-slate-900/90 text-slate-400 border-slate-700/80 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+              title="Change Grid Style (Crisp, Dense, Dotted)"
+            >
+              <ChevronDown
+                className={`w-3 h-3 transition-transform duration-150 ${
+                  isGridDropdownOpen ? 'rotate-180 text-amber-400' : 'text-slate-400'
+                }`}
+              />
+            </button>
+
+            {/* Grid Style & Options Dropdown Menu */}
             {isGridDropdownOpen && (
-              <div className="absolute left-0 bottom-full mb-1.5 w-44 bg-[#0d1322] border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
-                <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase tracking-wider border-b border-slate-800 mb-1">
-                  Chart Grid Style
+              <div className="absolute left-0 top-full mt-1.5 w-52 bg-[#0d1322]/98 backdrop-blur-xl border border-slate-700/90 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 select-none">
+                {/* Direct On/Off Switch Row */}
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 px-1">
+                  <span className="text-[11px] font-black text-slate-200">Grid Lines Display</span>
+                  <button
+                    id="grid-menu-quick-toggle"
+                    onClick={() => {
+                      handleToggleGrid();
+                      setIsGridDropdownOpen(false);
+                    }}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-black cursor-pointer transition-all ${
+                      gridMode !== 'off'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                    }`}
+                  >
+                    {gridMode !== 'off' ? '● ON' : '○ OFF'}
+                  </button>
+                </div>
+
+                <div className="text-[9px] font-black text-slate-400 px-1 py-0.5 uppercase tracking-wider mb-1">
+                  Grid Patterns
                 </div>
 
                 {[
                   { id: 'crisp', label: 'Crisp Dashed', desc: 'Optimal level tracking' },
                   { id: 'dense', label: 'Dense Solid', desc: 'High precision scalper grid' },
                   { id: 'dotted', label: 'Dotted Grid', desc: 'Subtle technical guidance' },
-                  { id: 'off', label: 'Grid Off', desc: 'Clean dark canvas' },
+                  { id: 'off', label: 'Grid Off', desc: 'Clean dark canvas without lines' },
                 ].map((item) => (
                   <button
                     key={item.id}
                     id={`chart-grid-option-${item.id}`}
                     onClick={() => {
                       sound.playClick();
+                      if (item.id !== 'off') {
+                        lastActiveGridModeRef.current = item.id as ChartGridMode;
+                      }
                       setGridMode(item.id as ChartGridMode);
                       setIsGridDropdownOpen(false);
                     }}
-                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer text-left ${
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer text-left mb-0.5 ${
                       gridMode === item.id
                         ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40'
                         : 'text-slate-300 hover:bg-slate-800/80'
                     }`}
                   >
                     <div>
-                      <div>{item.label}</div>
+                      <div className="font-bold">{item.label}</div>
                       <div className="text-[9px] text-slate-400 font-normal">{item.desc}</div>
                     </div>
-                    {gridMode === item.id && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                    {gridMode === item.id && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />}
                   </button>
                 ))}
               </div>
