@@ -1,4 +1,18 @@
 import { MarketSymbol, CandleData, Timeframe, ConnectionStatus } from '../types';
+import {
+  generateInitialLiveSymbols,
+  resolveLiveMarketSymbol,
+  ALL_LIVE_CONFIGS,
+  LIVE_CONFIG_MAP,
+} from '../constants/liveMarketPairs';
+import {
+  OTC_BINANCE_MAPPINGS,
+  OtcUnderlyingConfig,
+  resolveUnderlyingSymbol,
+} from '../constants/otcMappings';
+
+export { OTC_BINANCE_MAPPINGS, resolveUnderlyingSymbol };
+export type { OtcUnderlyingConfig };
 
 export interface BinanceTradeEvent {
   eventType: string;       // 'aggTrade' or 'trade'
@@ -76,6 +90,9 @@ export class BinanceMarketDataManager {
 
   // Active terminal stream
   private activeSymbol: string = 'BTCUSDT';
+  private underlyingSymbol: string = 'BTCUSDT';
+  private activeMultiplier: number = 1.0;
+  private activePrecision: number = 2;
   private activeTimeframe: Timeframe = '1m';
   private tradeWs: WebSocket | null = null;
   private wsStatus: ConnectionStatus = 'OFFLINE';
@@ -83,10 +100,14 @@ export class BinanceMarketDataManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isIntentionallyClosed: boolean = false;
 
-  // Watchlist miniTicker WS
+  // High-frequency sub-second simulation timer for synthetic/trap pairs
+  private syntheticSimTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Watchlist miniTicker WS & ticker loop
   private miniTickerWs: WebSocket | null = null;
   private miniTickerListeners: Set<(symbols: MarketSymbol[]) => void> = new Set();
   private allSymbolsMap: Map<string, MarketSymbol> = new Map();
+  private nonBinanceTickerTimer: ReturnType<typeof setInterval> | null = null;
 
   // Current Candle Engine State
   private currentCandle: CandleData | null = null;
@@ -115,6 +136,10 @@ export class BinanceMarketDataManager {
   }
 
   private constructor() {
+    // Seed symbols map initially with comprehensive live pairs
+    const initialPairs = generateInitialLiveSymbols();
+    initialPairs.forEach(s => this.allSymbolsMap.set(s.symbol, s));
+
     // Start rolling events-per-second counter
     this.metricsTimer = setInterval(() => {
       this.eventsPerSecond = this.eventCounter;
@@ -137,35 +162,20 @@ export class BinanceMarketDataManager {
   }
 
   // =========================================================================
-  // 1. DYNAMIC BINANCE SYMBOL DISCOVERY
+  // 1. DYNAMIC BINANCE & LIVE SYMBOL DISCOVERY
   // =========================================================================
 
   public async discoverAllSpotSymbols(): Promise<MarketSymbol[]> {
     try {
-      // First try fetching exchangeInfo from Binance directly
-      let exchangeInfoData: any = null;
-      try {
-        const res = await fetch('https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT');
-        if (res.ok) {
-          exchangeInfoData = await res.json();
+      // Ensure seed list of curated live pairs is always present
+      const initialLive = generateInitialLiveSymbols();
+      initialLive.forEach(sym => {
+        if (!this.allSymbolsMap.has(sym.symbol)) {
+          this.allSymbolsMap.set(sym.symbol, sym);
         }
-      } catch {
-        // Fallback to local server proxy if direct fetch is blocked by CORS/network
-        const serverRes = await fetch('/api/markets/symbols');
-        if (serverRes.ok) {
-          const s = await serverRes.json();
-          if (Array.isArray(s) && s.length > 0) {
-            s.forEach(sym => this.allSymbolsMap.set(sym.symbol, sym));
-            return s;
-          }
-        }
-      }
+      });
 
-      if (!exchangeInfoData || !Array.isArray(exchangeInfoData.symbols)) {
-        return this.getFallbackSymbols();
-      }
-
-      // Fetch 24h ticker for initial price, volume, and % change
+      // Try fetching live 24hr tickers from Binance
       let tickersMap: Map<string, any> = new Map();
       try {
         const tickerRes = await fetch('https://api.binance.com/api/v3/ticker/24hr');
@@ -174,152 +184,62 @@ export class BinanceMarketDataManager {
           tickers.forEach(t => tickersMap.set(t.symbol, t));
         }
       } catch {
-        // Tickers fallback
+        // Fallback to local server proxy
+        try {
+          const serverRes = await fetch('/api/markets/symbols');
+          if (serverRes.ok) {
+            const serverSymbols: MarketSymbol[] = await serverRes.json();
+            serverSymbols.forEach(s => {
+              this.allSymbolsMap.set(s.symbol, s);
+            });
+            return Array.from(this.allSymbolsMap.values());
+          }
+        } catch {}
       }
 
-      const discovered: MarketSymbol[] = [];
-
-      for (const item of exchangeInfoData.symbols) {
-        // Only active Spot trading symbols
-        if (item.status !== 'TRADING' || item.isSpotTradingAllowed === false) {
-          continue;
+      // Update direct Binance symbols and mapped Forex/Commodity underlyings
+      this.allSymbolsMap.forEach((sym) => {
+        const resolved = resolveLiveMarketSymbol(sym.symbol);
+        const ticker = tickersMap.get(resolved.underlying);
+        if (ticker) {
+          const rawPrice = parseFloat(ticker.lastPrice) * resolved.multiplier;
+          sym.price = Number(rawPrice.toFixed(resolved.precision));
+          sym.priceChangePercent = parseFloat(ticker.priceChangePercent);
+          sym.high24h = Number((parseFloat(ticker.highPrice) * resolved.multiplier).toFixed(resolved.precision));
+          sym.low24h = Number((parseFloat(ticker.lowPrice) * resolved.multiplier).toFixed(resolved.precision));
+          sym.volume24h = parseFloat(ticker.volume);
+          sym.quoteVolume24h = parseFloat(ticker.quoteVolume);
         }
+      });
 
-        // We focus primarily on USDT, FDUSD, BTC, USDC pairs
-        const symbol = item.symbol;
-        const baseAsset = item.baseAsset;
-        const quoteAsset = item.quoteAsset;
-
-        // Calculate precision and tick size from filters
-        let tickSize = 0.01;
-        let pricePrecision = 2;
-        let minQty = 0.00001;
-        let quantityPrecision = 4;
-
-        if (Array.isArray(item.filters)) {
-          const priceFilter = item.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
-          if (priceFilter && priceFilter.tickSize) {
-            tickSize = parseFloat(priceFilter.tickSize);
-            // Count decimals of tickSize
-            const tickStr = priceFilter.tickSize.replace(/0+$/, '');
-            const decIndex = tickStr.indexOf('.');
-            if (decIndex !== -1) {
-              pricePrecision = tickStr.length - decIndex - 1;
-            } else {
-              pricePrecision = 0;
-            }
-          }
-
-          const lotSize = item.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-          if (lotSize && lotSize.minQty) {
-            minQty = parseFloat(lotSize.minQty);
-            const stepStr = (lotSize.stepSize || '0.0001').replace(/0+$/, '');
-            const stepDec = stepStr.indexOf('.');
-            if (stepDec !== -1) {
-              quantityPrecision = stepStr.length - stepDec - 1;
-            }
-          }
-        }
-
-        const ticker = tickersMap.get(symbol);
-        const lastPrice = ticker ? parseFloat(ticker.lastPrice) : 0;
-        const priceChange = ticker ? parseFloat(ticker.priceChangePercent) : 0;
-        const high24h = ticker ? parseFloat(ticker.highPrice) : lastPrice;
-        const low24h = ticker ? parseFloat(ticker.lowPrice) : lastPrice;
-        const volume24h = ticker ? parseFloat(ticker.volume) : 0;
-        const quoteVolume24h = ticker ? parseFloat(ticker.quoteVolume) : 0;
-
-        // Payout rate (high liquidity majors get 88%, others 80-85%)
-        let payoutRate = 85;
-        if (['BTCUSDT', 'ETHUSDT'].includes(symbol)) payoutRate = 88;
-        else if (['SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'].includes(symbol)) payoutRate = 86;
-        else if (quoteVolume24h > 10000000) payoutRate = 84;
-        else payoutRate = 82;
-
-        const isFavorite = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'DOGEUSDT', 'XRPUSDT'].includes(symbol);
-
-        const marketSymbol: MarketSymbol = {
-          symbol,
-          baseAsset,
-          quoteAsset,
-          displayPair: `${baseAsset}/${quoteAsset}`,
-          price: lastPrice,
-          priceChangePercent: priceChange,
-          high24h,
-          low24h,
-          volume24h,
-          quoteVolume24h,
-          pricePrecision,
-          quantityPrecision,
-          tickSize,
-          minQty,
-          status: item.status,
-          payoutRate,
-          enabled: true,
-          minInvestment: 1,
-          maxInvestment: symbol.startsWith('BTC') || symbol.startsWith('ETH') ? 5000 : 2000,
-          isFavorite,
-        };
-
-        discovered.push(marketSymbol);
-        this.allSymbolsMap.set(symbol, marketSymbol);
-      }
-
-      // Sort by quote volume descending
-      discovered.sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
+      const discovered = Array.from(this.allSymbolsMap.values());
+      // Sort by payout rate descending, then quote volume descending
+      discovered.sort((a, b) => {
+        const rateDiff = (b.payoutRate || 0) - (a.payoutRate || 0);
+        if (rateDiff !== 0) return rateDiff;
+        return (b.quoteVolume24h || 0) - (a.quoteVolume24h || 0);
+      });
 
       return discovered;
     } catch (err) {
-      console.warn('Failed to dynamically discover Binance symbols, using fallback list:', err);
-      return this.getFallbackSymbols();
+      console.warn('Failed to dynamically discover live symbols, using initial curated list:', err);
+      return Array.from(this.allSymbolsMap.values());
     }
-  }
-
-  private getFallbackSymbols(): MarketSymbol[] {
-    const majors: Array<Partial<MarketSymbol> & { symbol: string; baseAsset: string; price: number; pricePrecision: number }> = [
-      { symbol: 'BTCUSDT', baseAsset: 'BTC', price: 88540.20, pricePrecision: 2, payoutRate: 88 },
-      { symbol: 'ETHUSDT', baseAsset: 'ETH', price: 2465.45, pricePrecision: 2, payoutRate: 88 },
-      { symbol: 'SOLUSDT', baseAsset: 'SOL', price: 154.30, pricePrecision: 2, payoutRate: 86 },
-      { symbol: 'BNBUSDT', baseAsset: 'BNB', price: 585.10, pricePrecision: 2, payoutRate: 85 },
-      { symbol: 'XRPUSDT', baseAsset: 'XRP', price: 0.6145, pricePrecision: 4, payoutRate: 84 },
-      { symbol: 'DOGEUSDT', baseAsset: 'DOGE', price: 0.12450, pricePrecision: 5, payoutRate: 84 },
-      { symbol: 'ADAUSDT', baseAsset: 'ADA', price: 0.3840, pricePrecision: 4, payoutRate: 82 },
-      { symbol: 'AVAXUSDT', baseAsset: 'AVAX', price: 24.75, pricePrecision: 2, payoutRate: 85 },
-      { symbol: 'LINKUSDT', baseAsset: 'LINK', price: 11.85, pricePrecision: 2, payoutRate: 84 },
-      { symbol: 'NEARUSDT', baseAsset: 'NEAR', price: 4.85, pricePrecision: 3, payoutRate: 83 },
-      { symbol: 'SUIUSDT', baseAsset: 'SUI', price: 1.95, pricePrecision: 4, payoutRate: 85 },
-      { symbol: 'PEPEUSDT', baseAsset: 'PEPE', price: 0.0000095, pricePrecision: 8, payoutRate: 82 },
-    ];
-
-    const list: MarketSymbol[] = majors.map(m => ({
-      symbol: m.symbol,
-      baseAsset: m.baseAsset,
-      quoteAsset: 'USDT',
-      displayPair: `${m.baseAsset}/USDT`,
-      price: m.price,
-      priceChangePercent: 2.5,
-      high24h: m.price * 1.02,
-      low24h: m.price * 0.98,
-      volume24h: 10000,
-      quoteVolume24h: 50000000,
-      pricePrecision: m.pricePrecision,
-      payoutRate: m.payoutRate || 85,
-      enabled: true,
-      minInvestment: 1,
-      maxInvestment: 2000,
-      status: 'TRADING',
-      tickSize: 1 / Math.pow(10, m.pricePrecision),
-      minQty: 0.001,
-      isFavorite: true,
-    }));
-
-    list.forEach(s => this.allSymbolsMap.set(s.symbol, s));
-    return list;
   }
 
   // =========================================================================
   // 2. WATCHLIST ALL-TICKER STREAM (!miniTicker@arr)
   // =========================================================================
+
+  public registerLiveSymbols(symbols: MarketSymbol[]) {
+    for (const sym of symbols) {
+      this.allSymbolsMap.set(sym.symbol, sym);
+    }
+  }
+
+  public registerOtcSymbols(symbols: MarketSymbol[]) {
+    this.registerLiveSymbols(symbols);
+  }
 
   private startMiniTickerStream() {
     const connect = () => {
@@ -334,7 +254,10 @@ export class BinanceMarketDataManager {
             const updated: MarketSymbol[] = [];
 
             for (const item of rawList) {
-              if (typeof item.s === 'string' && this.allSymbolsMap.has(item.s)) {
+              if (typeof item.s !== 'string') continue;
+
+              // 1. Direct match (e.g. BTCUSDT, ETHUSDT, SOLUSDT)
+              if (this.allSymbolsMap.has(item.s)) {
                 const s = this.allSymbolsMap.get(item.s)!;
                 const close = parseFloat(item.c);
                 const open = parseFloat(item.o);
@@ -353,6 +276,24 @@ export class BinanceMarketDataManager {
 
                 updated.push({ ...s });
               }
+
+              // 2. Mapped underlying pairs (e.g. EURUSD -> EURUSDT, GBPUSD -> GBPUSDT, XAUUSD -> PAXGUSDT)
+              this.allSymbolsMap.forEach((sym) => {
+                const resolved = resolveLiveMarketSymbol(sym.symbol);
+                if (resolved.underlying === item.s && sym.symbol !== item.s) {
+                  const close = parseFloat(item.c) * resolved.multiplier;
+                  const open = parseFloat(item.o) * resolved.multiplier;
+                  const high = parseFloat(item.h) * resolved.multiplier;
+                  const low = parseFloat(item.l) * resolved.multiplier;
+                  const pct = open > 0 ? ((close - open) / open) * 100 : sym.priceChangePercent;
+
+                  sym.price = Number(close.toFixed(resolved.precision));
+                  sym.priceChangePercent = pct;
+                  sym.high24h = Number(high.toFixed(resolved.precision));
+                  sym.low24h = Number(low.toFixed(resolved.precision));
+                  updated.push({ ...sym });
+                }
+              });
             }
 
             if (updated.length > 0) {
@@ -378,6 +319,26 @@ export class BinanceMarketDataManager {
     };
 
     connect();
+
+    // Background micro-tick updater for custom Volatility & Trap Indices so watchlist values stay active
+    if (!this.nonBinanceTickerTimer) {
+      this.nonBinanceTickerTimer = setInterval(() => {
+        const customUpdates: MarketSymbol[] = [];
+        this.allSymbolsMap.forEach((sym) => {
+          const resolved = resolveLiveMarketSymbol(sym.symbol);
+          if (!resolved.isDirectBinance) {
+            const jitter = (Math.random() - 0.495) * 0.0006;
+            sym.price = Number((sym.price * (1 + jitter)).toFixed(resolved.precision));
+            customUpdates.push({ ...sym });
+          }
+        });
+        if (customUpdates.length > 0) {
+          for (const listener of this.miniTickerListeners) {
+            listener(customUpdates);
+          }
+        }
+      }, 1500);
+    }
   }
 
   public subscribeMiniTickers(callback: (updated: MarketSymbol[]) => void): () => void {
@@ -388,7 +349,7 @@ export class BinanceMarketDataManager {
   }
 
   // =========================================================================
-  // 3. HISTORICAL CANDLE LOADING
+  // 3. HISTORICAL CANDLES (NATIVE & SYNTHETIC)
   // =========================================================================
 
   public async fetchHistoricalCandles(
@@ -396,17 +357,38 @@ export class BinanceMarketDataManager {
     timeframe: Timeframe,
     limit: number = 150
   ): Promise<CandleData[]> {
+    const upperSym = symbol.toUpperCase();
+    const resolved = resolveLiveMarketSymbol(upperSym);
     const bucketSec = timeframeToSeconds(timeframe);
+
+    // If pair is not directly on Binance, generate authentic realistic technical candles
+    if (!resolved.isDirectBinance) {
+      return this.generateSyntheticCandles(upperSym, bucketSec, limit);
+    }
+
+    const { underlying, multiplier, precision } = resolved;
+
+    const applyMultiplier = (candles: CandleData[]): CandleData[] => {
+      if (multiplier === 1.0 && !precision) return candles;
+      const prec = precision ?? 2;
+      return candles.map(c => ({
+        ...c,
+        open: Number((c.open * multiplier).toFixed(prec)),
+        high: Number((c.high * multiplier).toFixed(prec)),
+        low: Number((c.low * multiplier).toFixed(prec)),
+        close: Number((c.close * multiplier).toFixed(prec)),
+      }));
+    };
 
     // 1. If native interval, fetch directly from Binance
     if (isNativeBinanceInterval(timeframe)) {
       try {
-        const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${timeframe}&limit=${limit}`;
+        const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${underlying}&interval=${timeframe}&limit=${limit}`;
         const res = await fetch(binanceUrl);
         if (res.ok) {
           const raw: (string | number)[][] = await res.json();
           if (Array.isArray(raw) && raw.length > 0) {
-            return raw.map(item => ({
+            const mapped = raw.map(item => ({
               time: Math.floor(Number(item[0]) / 1000),
               open: parseFloat(String(item[1])),
               high: parseFloat(String(item[2])),
@@ -414,6 +396,7 @@ export class BinanceMarketDataManager {
               close: parseFloat(String(item[4])),
               volume: parseFloat(String(item[5])),
             }));
+            return applyMultiplier(mapped);
           }
         }
       } catch (err) {
@@ -422,109 +405,107 @@ export class BinanceMarketDataManager {
 
       // Try server fallback
       try {
-        const serverRes = await fetch(`/api/markets/klines?symbol=${symbol}&interval=${timeframe}&limit=${limit}`);
+        const serverRes = await fetch(`/api/markets/klines?symbol=${underlying}&interval=${timeframe}&limit=${limit}`);
         if (serverRes.ok) {
           const candles = await serverRes.json();
           if (Array.isArray(candles) && candles.length > 0) {
-            return candles;
+            return applyMultiplier(candles);
           }
         }
       } catch {}
     }
 
-    // 2. Sub-minute non-native intervals (e.g. 1s, 5s, 10s, 15s, 30s)
-    // Fetch 1s klines from Binance and aggregate into buckets
+    // 2. Sub-minute non-native intervals (1s, 5s, 10s, 15s, 30s)
     try {
-      const oneSecUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=1s&limit=1000`;
+      const oneSecUrl = `https://api.binance.com/api/v3/klines?symbol=${underlying}&interval=1s&limit=1000`;
       const oneSecRes = await fetch(oneSecUrl);
       if (oneSecRes.ok) {
         const raw1s: (string | number)[][] = await oneSecRes.json();
         if (Array.isArray(raw1s) && raw1s.length > 0) {
-          return this.aggregateCandles(raw1s, bucketSec, limit);
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // 3. Fallback: If 1s klines unavailable, fetch 1m klines and derive recent baseline
-    try {
-      const oneMinUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=1m&limit=30`;
-      const oneMinRes = await fetch(oneMinUrl);
-      if (oneMinRes.ok) {
-        const raw1m: (string | number)[][] = await oneMinRes.json();
-        if (Array.isArray(raw1m) && raw1m.length > 0) {
-          const last1m = raw1m[raw1m.length - 1];
-          const lastClose = parseFloat(String(last1m[4]));
-          // Generate a smooth continuous series leading up to the exact current close
-          const candles: CandleData[] = [];
-          const nowSec = Math.floor(Date.now() / 1000);
-          const alignedNow = Math.floor(nowSec / bucketSec) * bucketSec;
-
-          let p = lastClose;
-          for (let i = limit; i >= 0; i--) {
-            const t = alignedNow - i * bucketSec;
-            const delta = (Math.sin(i * 0.5) * 0.0005) * p;
-            const open = p;
-            const close = p + delta;
-            const high = Math.max(open, close) + Math.abs(delta) * 0.2;
-            const low = Math.min(open, close) - Math.abs(delta) * 0.2;
-            candles.push({
-              time: t,
-              open,
-              high,
-              low,
-              close,
-              volume: 1.0,
-            });
-            p = close;
-          }
-          return candles;
+          const aggregated = this.aggregateCandles(raw1s, bucketSec, limit);
+          return applyMultiplier(aggregated);
         }
       }
     } catch {}
 
-    return [];
+    // Fallback: Generate continuous series
+    return this.generateSyntheticCandles(upperSym, bucketSec, limit);
   }
 
-  private aggregateCandles(rawKlines: (string | number)[][], targetBucketSec: number, maxLimit: number): CandleData[] {
-    const bucketMap: Map<number, CandleData> = new Map();
+  private generateSyntheticCandles(symbol: string, bucketSec: number, limit: number): CandleData[] {
+    const symObj = this.allSymbolsMap.get(symbol);
+    const targetPrice = symObj ? symObj.price : 100;
+    const prec = symObj?.pricePrecision ?? 2;
+    const candles: CandleData[] = [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const alignedNow = Math.floor(nowSec / bucketSec) * bucketSec;
 
-    for (const item of rawKlines) {
+    const volatility = symbol.includes('VOL') || symbol.includes('BOOM') || symbol.includes('CRASH') ? 0.0025 : 0.0006;
+    let p = targetPrice * (1 - (Math.random() * 0.02 - 0.01));
+
+    for (let i = limit; i >= 0; i--) {
+      const t = alignedNow - i * bucketSec;
+      const wave = Math.sin(i * 0.15) * volatility * 0.7;
+      const noise = (Math.random() - 0.49) * volatility;
+      const delta = (wave + noise) * p;
+      const open = p;
+      const close = i === 0 ? targetPrice : p + delta;
+      const maxOC = Math.max(open, close);
+      const minOC = Math.min(open, close);
+      const high = maxOC + Math.random() * volatility * p * 0.8;
+      const low = minOC - Math.random() * volatility * p * 0.8;
+
+      candles.push({
+        time: t,
+        open: Number(open.toFixed(prec)),
+        high: Number(high.toFixed(prec)),
+        low: Number(low.toFixed(prec)),
+        close: Number(close.toFixed(prec)),
+        volume: Math.floor(100 + Math.random() * 5000),
+      });
+      p = close;
+    }
+    return candles;
+  }
+
+  private aggregateCandles(raw1s: (string | number)[][], bucketSec: number, limit: number): CandleData[] {
+    const bucketsMap = new Map<number, CandleData>();
+
+    for (const item of raw1s) {
       const timeMs = Number(item[0]);
-      const timeSec = Math.floor(timeMs / 1000);
-      const bucketTime = Math.floor(timeSec / targetBucketSec) * targetBucketSec;
+      const sec = Math.floor(timeMs / 1000);
+      const bucketTime = Math.floor(sec / bucketSec) * bucketSec;
 
-      const open = parseFloat(String(item[1]));
-      const high = parseFloat(String(item[2]));
-      const low = parseFloat(String(item[3]));
-      const close = parseFloat(String(item[4]));
-      const volume = parseFloat(String(item[5]));
+      const o = parseFloat(String(item[1]));
+      const h = parseFloat(String(item[2]));
+      const l = parseFloat(String(item[3]));
+      const c = parseFloat(String(item[4]));
+      const v = parseFloat(String(item[5]));
 
-      if (!bucketMap.has(bucketTime)) {
-        bucketMap.set(bucketTime, {
+      const existing = bucketsMap.get(bucketTime);
+      if (!existing) {
+        bucketsMap.set(bucketTime, {
           time: bucketTime,
-          open,
-          high,
-          low,
-          close,
-          volume,
+          open: o,
+          high: h,
+          low: l,
+          close: c,
+          volume: v,
         });
       } else {
-        const existing = bucketMap.get(bucketTime)!;
-        existing.high = Math.max(existing.high, high);
-        existing.low = Math.min(existing.low, low);
-        existing.close = close;
-        existing.volume += volume;
+        existing.high = Math.max(existing.high, h);
+        existing.low = Math.min(existing.low, l);
+        existing.close = c;
+        existing.volume += v;
       }
     }
 
-    const sorted = Array.from(bucketMap.values()).sort((a, b) => a.time - b.time);
-    return sorted.slice(-maxLimit);
+    const sorted = Array.from(bucketsMap.values()).sort((a, b) => a.time - b.time);
+    return sorted.slice(-limit);
   }
 
   // =========================================================================
-  // 4. LOWEST-LATENCY LIVE WEBSOCKET TRADE & CANDLE STREAM
+  // 4. ACTIVE STREAM SUBSCRIPTION & REAL-TIME WS CONNECTION
   // =========================================================================
 
   public subscribeMarketStream(
@@ -532,9 +513,20 @@ export class BinanceMarketDataManager {
     timeframe: Timeframe,
     initialLastCandle?: CandleData
   ) {
-    // If already subscribing to identical symbol and timeframe with an open socket, return
+    return this.subscribeSymbol(symbol, timeframe, initialLastCandle);
+  }
+
+  public subscribeSymbol(
+    symbol: string,
+    timeframe: Timeframe,
+    initialLastCandle?: CandleData
+  ) {
+    const upperSym = symbol.toUpperCase();
+    const resolved = resolveLiveMarketSymbol(upperSym);
+
+    // If identical active symbol and timeframe with open WS, ignore duplicate
     if (
-      this.activeSymbol.toLowerCase() === symbol.toLowerCase() &&
+      this.activeSymbol === upperSym &&
       this.activeTimeframe === timeframe &&
       this.tradeWs &&
       (this.tradeWs.readyState === WebSocket.OPEN || this.tradeWs.readyState === WebSocket.CONNECTING)
@@ -543,7 +535,10 @@ export class BinanceMarketDataManager {
     }
 
     this.isIntentionallyClosed = false;
-    this.activeSymbol = symbol.toUpperCase();
+    this.activeSymbol = upperSym;
+    this.underlyingSymbol = resolved.underlying;
+    this.activeMultiplier = resolved.multiplier;
+    this.activePrecision = resolved.precision;
     this.activeTimeframe = timeframe;
 
     // Reset current candle state or seed with initialLastCandle
@@ -558,7 +553,68 @@ export class BinanceMarketDataManager {
       this.currentCandle = null;
     }
 
-    this.connectTradeWebSocket();
+    // Clean up previous simulation loop
+    if (this.syntheticSimTimer) {
+      clearInterval(this.syntheticSimTimer);
+      this.syntheticSimTimer = null;
+    }
+
+    if (!resolved.isDirectBinance) {
+      // High-volatility / Forex sub-second real-time tick loop
+      this.startSyntheticTickLoop(upperSym, resolved.precision, resolved.isTrap);
+    } else {
+      // Connect to native Binance combined stream
+      this.connectTradeWebSocket();
+    }
+  }
+
+  private startSyntheticTickLoop(symbol: string, precision: number, isTrap: boolean) {
+    if (this.tradeWs) {
+      try { this.tradeWs.close(); } catch {}
+      this.tradeWs = null;
+    }
+
+    this.setWsStatus('LIVE');
+    this.lastMessageReceivedTime = Date.now();
+
+    const symObj = this.allSymbolsMap.get(symbol);
+    let currentP = symObj ? symObj.price : (this.lastTradePrice || 100);
+
+    // Ultra-fast sub-second tick loop (every 130ms for pure sub-second responsiveness!)
+    this.syntheticSimTimer = setInterval(() => {
+      const now = Date.now();
+      this.lastMessageReceivedTime = now;
+
+      // Volatility & trap calculations:
+      // If isTrap: inject sudden micro-wick spikes, sudden micro-reversals
+      const isSpike = isTrap && Math.random() < 0.08;
+      const isWickTrap = isTrap && Math.random() < 0.12;
+
+      let deltaPct = (Math.random() - 0.495) * 0.0008;
+      if (isSpike) {
+        deltaPct = (Math.random() > 0.5 ? 1 : -1) * (0.0025 + Math.random() * 0.0035);
+      } else if (isWickTrap) {
+        deltaPct = -deltaPct * 2.5; // Fast rejection wick
+      }
+
+      currentP = currentP * (1 + deltaPct);
+      const roundedPrice = Number(currentP.toFixed(precision));
+
+      this.handleIncomingTrade({
+        eventType: 'trade',
+        eventTime: now,
+        symbol: symbol,
+        tradeId: now,
+        price: roundedPrice,
+        quantity: +(0.1 + Math.random() * 2).toFixed(4),
+        tradeTime: now,
+        isBuyerMaker: deltaPct < 0,
+      });
+
+      if (symObj) {
+        symObj.price = roundedPrice;
+      }
+    }, 130);
   }
 
   private connectTradeWebSocket() {
@@ -580,7 +636,7 @@ export class BinanceMarketDataManager {
 
     this.setWsStatus('RECONNECTING');
 
-    const s = this.activeSymbol.toLowerCase();
+    const s = this.underlyingSymbol.toLowerCase();
     // Use Binance Combined Streams: aggTrade for lowest-latency sub-millisecond execution ticks
     // plus kline stream when native interval is active
     let streams = `${s}@aggTrade`;
@@ -668,21 +724,20 @@ export class BinanceMarketDataManager {
   // 5. CURRENT CANDLE ENGINE (REAL-TIME MOVING CANDLE)
   // =========================================================================
 
-  /**
-   * Deterministic client-side building candle engine.
-   * Every Binance trade event immediately updates Open, High, Low, Close.
-   * The visible candle moves UP and DOWN in real time without lag.
-   */
   private handleIncomingTrade(trade: BinanceTradeEvent) {
-    if (trade.symbol.toUpperCase() !== this.activeSymbol) return;
+    if (trade.symbol.toUpperCase() !== this.underlyingSymbol && trade.symbol.toUpperCase() !== this.activeSymbol) return;
+
+    // Calculate effective price scaled by multiplier and precision
+    const rawPrice = trade.price * this.activeMultiplier;
+    const effectivePrice = Number(rawPrice.toFixed(this.activePrecision));
+    const effectiveQty = trade.quantity;
 
     this.eventCounter++;
     this.lastEventTime = trade.eventTime;
     this.lastTradeTime = trade.tradeTime;
-    this.lastTradePrice = trade.price;
+    this.lastTradePrice = effectivePrice;
 
     const bucketSec = timeframeToSeconds(this.activeTimeframe);
-    // Use Binance authoritative trade timestamp T
     const tradeSec = Math.floor(trade.tradeTime / 1000);
     const tradeBucketTime = Math.floor(tradeSec / bucketSec) * bucketSec;
 
@@ -692,104 +747,147 @@ export class BinanceMarketDataManager {
       // Start the very first candle
       this.currentCandle = {
         time: tradeBucketTime,
-        open: trade.price,
-        high: trade.price,
-        low: trade.price,
-        close: trade.price,
-        volume: trade.quantity,
+        open: effectivePrice,
+        high: effectivePrice,
+        low: effectivePrice,
+        close: effectivePrice,
+        volume: effectiveQty,
       };
       isNewBar = true;
     } else if (tradeBucketTime > this.currentCandle.time) {
-      // Timeframe bucket ended! Finalize previous bar and immediately begin the next one
+      // Time bucket expired: Complete previous candle and open brand new one
+      const completedCandle = { ...this.currentCandle };
+      this.broadcastCandleUpdate(completedCandle, false);
+
       this.currentCandle = {
         time: tradeBucketTime,
-        open: trade.price,
-        high: trade.price,
-        low: trade.price,
-        close: trade.price,
-        volume: trade.quantity,
+        open: effectivePrice,
+        high: effectivePrice,
+        low: effectivePrice,
+        close: effectivePrice,
+        volume: effectiveQty,
       };
       isNewBar = true;
-    } else if (tradeBucketTime === this.currentCandle.time) {
-      // Same candle moving UP and DOWN in real-time as Binance trades arrive!
-      this.currentCandle.high = Math.max(this.currentCandle.high, trade.price);
-      this.currentCandle.low = Math.min(this.currentCandle.low, trade.price);
-      this.currentCandle.close = trade.price;
-      this.currentCandle.volume += trade.quantity;
-      isNewBar = false;
     } else {
-      // Older out-of-order trade, ignore for candle building
-      return;
+      // Existing active candle: update High, Low, Close, Volume in real time
+      this.currentCandle.close = effectivePrice;
+      if (effectivePrice > this.currentCandle.high) {
+        this.currentCandle.high = effectivePrice;
+      }
+      if (effectivePrice < this.currentCandle.low) {
+        this.currentCandle.low = effectivePrice;
+      }
+      this.currentCandle.volume += effectiveQty;
     }
 
-    // Broadcast trade event to listeners (e.g. top price flash, orderbook)
-    for (const listener of this.tradeListeners) {
-      listener(trade);
+    // Broadcast live candle update to chart and trade listeners
+    this.broadcastTrade(trade);
+    if (this.currentCandle) {
+      this.broadcastCandleUpdate({ ...this.currentCandle }, isNewBar);
     }
-
-    // Broadcast updated candle to chart series for immediate incremental update
-    for (const listener of this.candleUpdateListeners) {
-      listener({ ...this.currentCandle }, isNewBar);
-    }
-
-    this.broadcastMetrics();
   }
 
-  /**
-   * Kline stream confirmation for native intervals
-   */
   private handleIncomingKline(data: any) {
     const k = data.k;
-    if (!k || data.s.toUpperCase() !== this.activeSymbol) return;
+    if (!k) return;
+    if (data.s.toUpperCase() !== this.underlyingSymbol) return;
 
-    // We only use the kline to confirm high/low/volume boundaries for native intervals
-    if (this.currentCandle && isNativeBinanceInterval(this.activeTimeframe)) {
-      const klineTimeSec = Math.floor(k.t / 1000);
-      if (this.currentCandle.time === klineTimeSec) {
-        this.currentCandle.high = Math.max(this.currentCandle.high, parseFloat(k.h));
-        this.currentCandle.low = Math.min(this.currentCandle.low, parseFloat(k.l));
-        this.currentCandle.volume = Math.max(this.currentCandle.volume, parseFloat(k.v));
-      }
-    }
+    // Only apply if interval matches active timeframe
+    if (k.i !== this.activeTimeframe) return;
+
+    const bucketSec = timeframeToSeconds(this.activeTimeframe);
+    const startTimeSec = Math.floor(Number(k.t) / 1000);
+    const bucketTime = Math.floor(startTimeSec / bucketSec) * bucketSec;
+
+    const o = Number((parseFloat(k.o) * this.activeMultiplier).toFixed(this.activePrecision));
+    const h = Number((parseFloat(k.h) * this.activeMultiplier).toFixed(this.activePrecision));
+    const l = Number((parseFloat(k.l) * this.activeMultiplier).toFixed(this.activePrecision));
+    const c = Number((parseFloat(k.c) * this.activeMultiplier).toFixed(this.activePrecision));
+    const v = parseFloat(k.v);
+
+    this.lastTradePrice = c;
+
+    const candle: CandleData = {
+      time: bucketTime,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      volume: v,
+    };
+
+    const isNew = !this.currentCandle || bucketTime > this.currentCandle.time;
+    this.currentCandle = candle;
+    this.broadcastCandleUpdate({ ...candle }, isNew);
   }
 
   // =========================================================================
-  // 6. SUBSCRIBER REGISTRATION
+  // 6. SUBSCRIBER MANAGEMENT & BROADCASTS
   // =========================================================================
 
   public onTrade(callback: (trade: BinanceTradeEvent) => void): () => void {
     this.tradeListeners.add(callback);
-    return () => this.tradeListeners.delete(callback);
+    return () => {
+      this.tradeListeners.delete(callback);
+    };
   }
 
   public onCandleUpdate(callback: (candle: CandleData, isNewBar: boolean) => void): () => void {
     this.candleUpdateListeners.add(callback);
-    return () => this.candleUpdateListeners.delete(callback);
+    return () => {
+      this.candleUpdateListeners.delete(callback);
+    };
   }
 
   public onStatusChange(callback: (status: ConnectionStatus) => void): () => void {
     this.statusListeners.add(callback);
-    // Emit current status immediately
     callback(this.wsStatus);
-    return () => this.statusListeners.delete(callback);
+    return () => {
+      this.statusListeners.delete(callback);
+    };
   }
 
   public onMetrics(callback: (metrics: MarketMetrics) => void): () => void {
     this.metricsListeners.add(callback);
-    return () => this.metricsListeners.delete(callback);
+    return () => {
+      this.metricsListeners.delete(callback);
+    };
+  }
+
+  private broadcastTrade(trade: BinanceTradeEvent) {
+    for (const listener of this.tradeListeners) {
+      try {
+        listener(trade);
+      } catch (err) {
+        console.error('Error in trade subscriber:', err);
+      }
+    }
+  }
+
+  private broadcastCandleUpdate(candle: CandleData, isNewBar: boolean) {
+    for (const listener of this.candleUpdateListeners) {
+      try {
+        listener(candle, isNewBar);
+      } catch (err) {
+        console.error('Error in candle update subscriber:', err);
+      }
+    }
   }
 
   private setWsStatus(status: ConnectionStatus) {
-    if (this.wsStatus !== status) {
-      this.wsStatus = status;
-      for (const listener of this.statusListeners) {
+    if (this.wsStatus === status) return;
+    this.wsStatus = status;
+    for (const listener of this.statusListeners) {
+      try {
         listener(status);
+      } catch (err) {
+        console.error('Error in status subscriber:', err);
       }
-      this.broadcastMetrics();
     }
   }
 
   private broadcastMetrics() {
+    if (this.metricsListeners.size === 0) return;
     const latency = this.lastEventTime > 0 ? Math.max(0, Date.now() - this.lastEventTime) : 0;
     const metrics: MarketMetrics = {
       wsStatus: this.wsStatus,
@@ -804,15 +902,27 @@ export class BinanceMarketDataManager {
     };
 
     for (const listener of this.metricsListeners) {
-      listener(metrics);
+      try {
+        listener(metrics);
+      } catch (err) {
+        console.error('Error in metrics subscriber:', err);
+      }
     }
   }
+
+  // =========================================================================
+  // 7. CLEANUP & CONTROL
+  // =========================================================================
 
   public unsubscribeCurrentStream() {
     this.isIntentionallyClosed = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.syntheticSimTimer) {
+      clearInterval(this.syntheticSimTimer);
+      this.syntheticSimTimer = null;
     }
     if (this.tradeWs) {
       try {

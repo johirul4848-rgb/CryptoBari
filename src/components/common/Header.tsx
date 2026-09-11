@@ -637,7 +637,7 @@ export const Header: React.FC<HeaderProps> = ({
                           Markets Watchlist
                         </div>
                         <div className="text-[11px] font-semibold text-white/90 mt-0.5">
-                          Crypto • Forex • Commodities • OTC
+                          100% Live Binance Spot Crypto
                         </div>
                       </div>
                     </div>

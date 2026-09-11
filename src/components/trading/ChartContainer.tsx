@@ -20,6 +20,7 @@ import {
   MarketMetrics,
   BinanceTradeEvent,
 } from '../../services/binanceMarketData';
+import { otcMarketData } from '../../services/otcMarketData';
 import {
   Maximize2,
   Minimize2,
@@ -31,8 +32,6 @@ import {
   BarChart2,
   Activity,
   Terminal,
-  ArrowUpRight,
-  ArrowDownRight,
   Clock,
   Radio,
   AlertTriangle,
@@ -56,6 +55,7 @@ interface ChartContainerProps {
   accountMode: 'DEMO' | 'LIVE';
   onPriceUpdate?: (price: number) => void;
   connectionStatus?: ConnectionStatus;
+  onOpenSelector?: () => void;
 }
 
 interface HoverCandleData {
@@ -79,6 +79,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   accountMode,
   onPriceUpdate,
   connectionStatus = 'LIVE',
+  onOpenSelector,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -548,12 +549,14 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
       seriesRef.current = areaSeries;
     }
 
-    // 2. Load Historical Candles from Binance
+    // 2. Load Historical Candles (Unified Binance & Binance-backed OTC stream)
     setIsLoadingCandles(true);
     let isCancelled = false;
 
-    binanceMarketData
-      .fetchHistoricalCandles(symbol.symbol, timeframe, 150)
+    const activeService = binanceMarketData;
+    const candlePromise = binanceMarketData.fetchHistoricalCandles(symbol.symbol, timeframe, 150);
+
+    candlePromise
       .then((candles) => {
         if (isCancelled || !seriesRef.current || !chartRef.current) return;
 
@@ -577,11 +580,11 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           // Compute initial indicators
           updateAllIndicators();
 
-          // Connect Binance real-time WebSocket market stream seeded with last candle
-          binanceMarketData.subscribeMarketStream(symbol.symbol, timeframe, lastCandle);
+          // Connect real-time WebSocket market stream seeded with last candle
+          activeService.subscribeMarketStream(symbol.symbol, timeframe, lastCandle);
         } else {
           // Connect stream directly
-          binanceMarketData.subscribeMarketStream(symbol.symbol, timeframe);
+          activeService.subscribeMarketStream(symbol.symbol, timeframe);
         }
 
         setIsLoadingCandles(false);
@@ -589,7 +592,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
       .catch((err) => {
         console.warn('Error loading candles:', err);
         if (!isCancelled) {
-          binanceMarketData.subscribeMarketStream(symbol.symbol, timeframe);
+          activeService.subscribeMarketStream(symbol.symbol, timeframe);
           setIsLoadingCandles(false);
         }
       });
@@ -628,8 +631,10 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   // =========================================================================
 
   useEffect(() => {
+    const activeService = binanceMarketData;
+
     // 1. Subscribe to incremental candle updates (moving candle!)
-    const unsubCandle = binanceMarketData.onCandleUpdate((candle, _isNewBar) => {
+    const unsubCandle = activeService.onCandleUpdate((candle, _isNewBar) => {
       if (!seriesRef.current) return;
       try {
         setLastCandleTime(Number(candle.time));
@@ -666,8 +671,8 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
       }
     });
 
-    // 2. Subscribe to incoming Binance trade events for lowest-latency price ticks & flash
-    const unsubTrade = binanceMarketData.onTrade((trade) => {
+    // 2. Subscribe to incoming trade events for lowest-latency price ticks & flash
+    const unsubTrade = activeService.onTrade((trade) => {
       const newPrice = trade.price;
       const oldPrice = prevPriceRef.current;
 
@@ -697,7 +702,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     });
 
     // 3. Subscribe to market metrics (latency, events/sec, connection status)
-    const unsubMetrics = binanceMarketData.onMetrics((m) => {
+    const unsubMetrics = activeService.onMetrics((m) => {
       setMetrics(m);
     });
 
@@ -709,7 +714,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
         clearTimeout(flashTimeoutRef.current);
       }
     };
-  }, [chartType, onPriceUpdate]);
+  }, [symbol.symbol, symbol.isOtc, symbol.priceSource, chartType, onPriceUpdate]);
 
   // =========================================================================
   // 3. QUOTEX STYLE ACTIVE TRADE ENTRY PRICE LINES
@@ -788,93 +793,10 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   };
 
   const effectiveStatus = metrics?.wsStatus || connectionStatus;
-  const formattedPrice = formatPriceByPrecision(livePrice, symbol.pricePrecision || 2);
-  const is24hPositive = symbol.priceChangePercent >= 0;
 
   return (
     <div className="relative w-full h-full flex flex-col bg-[#0b0f17] overflow-hidden select-none border border-slate-800/60 rounded-lg shadow-2xl">
-      {/* 1. TOP LIVE PRICE & METRICS HUD BAR */}
-      <div className="flex items-center justify-between px-3 md:px-4 py-2 border-b border-slate-800/80 bg-[#0e1420]/95 backdrop-blur-md z-20 flex-wrap gap-2">
-        {/* Left: Active Pair + Live Price with Flash Animation + 24h Change + Live Time Clock */}
-        <div className="flex items-center gap-2.5 md:gap-4 flex-wrap">
-          {/* Symbol Display */}
-          <div className="flex items-center">
-            <span className="text-sm md:text-base font-extrabold text-slate-100 tracking-tight">
-              {symbol.displayPair}
-            </span>
-          </div>
-
-          {/* Live Streaming Price with Flash Feedback */}
-          <div className="flex items-center gap-2">
-            <div
-              className={`font-mono text-base md:text-lg font-bold transition-all duration-200 px-2 py-0.5 rounded ${
-                priceFlash === 'UP'
-                  ? 'text-emerald-400 bg-emerald-950/60 shadow-[0_0_12px_rgba(16,185,129,0.3)] scale-[1.03]'
-                  : priceFlash === 'DOWN'
-                  ? 'text-rose-400 bg-rose-950/60 shadow-[0_0_12px_rgba(244,63,94,0.3)] scale-[0.98]'
-                  : 'text-slate-100'
-              }`}
-            >
-              {formattedPrice}
-            </div>
-
-            {/* 24h Change Badge (Price Movement) */}
-            <div
-              className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded ${
-                is24hPositive
-                  ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                  : 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
-              }`}
-            >
-              {is24hPositive ? (
-                <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-              ) : (
-                <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-              )}
-              {is24hPositive ? `+${symbol.priceChangePercent.toFixed(2)}%` : `${symbol.priceChangePercent.toFixed(2)}%`}
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Connection Status + Tools + Debug Toggles */}
-        <div className="flex items-center gap-2">
-          {/* Live Status Indicator */}
-          <div
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-bold border transition-colors ${
-              effectiveStatus === 'LIVE'
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : effectiveStatus === 'RECONNECTING'
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                : effectiveStatus === 'DELAYED'
-                ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                effectiveStatus === 'LIVE'
-                  ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]'
-                  : effectiveStatus === 'RECONNECTING'
-                  ? 'bg-amber-400 animate-ping'
-                  : effectiveStatus === 'DELAYED'
-                  ? 'bg-amber-400'
-                  : 'bg-rose-500'
-              }`}
-            />
-            <span>
-              {effectiveStatus === 'LIVE'
-                ? '● LIVE'
-                : effectiveStatus === 'RECONNECTING'
-                ? '◐ RECONNECTING'
-                : effectiveStatus === 'DELAYED'
-                ? '⚠ DELAYED'
-                : '○ OFFLINE'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. TIMEFRAMES & CHART TOOLS SUB-BAR */}
+      {/* 1. TIMEFRAMES & CHART TOOLS BAR */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 bg-[#0d121c]/90 z-10 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Single Timeframe Dropdown Selector with Scroll Functionality */}
@@ -1098,8 +1020,44 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           </div>
         </div>
 
-        {/* Right: Chart Type & Zoom Tools */}
+        {/* Right: Status, Chart Type & Zoom Tools */}
         <div className="flex items-center gap-1.5">
+          {/* Live Status Indicator */}
+          <div
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${
+              effectiveStatus === 'LIVE'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : effectiveStatus === 'RECONNECTING'
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                : effectiveStatus === 'DELAYED'
+                ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                effectiveStatus === 'LIVE'
+                  ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]'
+                  : effectiveStatus === 'RECONNECTING'
+                  ? 'bg-amber-400 animate-ping'
+                  : effectiveStatus === 'DELAYED'
+                  ? 'bg-amber-400'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span className="hidden sm:inline">
+              {effectiveStatus === 'LIVE'
+                ? 'LIVE'
+                : effectiveStatus === 'RECONNECTING'
+                ? 'RECONNECTING'
+                : effectiveStatus === 'DELAYED'
+                ? 'DELAYED'
+                : 'OFFLINE'}
+            </span>
+          </div>
+
+          <div className="h-4 w-[1px] bg-slate-800 mx-0.5" />
+
           {/* Chart Type Toggle (Candles vs Mountain Area) */}
           <div className="flex items-center bg-slate-900 rounded p-0.5 border border-slate-800">
             <button

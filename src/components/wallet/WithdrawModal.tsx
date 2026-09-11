@@ -85,7 +85,10 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
           amount: withdrawAmount,
           method: 'Binance Pay',
           address: receiverBinanceId.trim(),
+          receiverBinanceId: receiverBinanceId.trim(),
+          binanceId: receiverBinanceId.trim(),
           network: 'Binance Pay UID Transfer',
+          currentLiveBalance: liveBalance,
           userName,
           userEmail,
         }),
@@ -94,8 +97,18 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       const data = await res.json();
       if (data.success && data.withdrawal) {
         sound.playWin();
-        setSubmittedWithdrawal(data.withdrawal);
+        const record = data.withdrawal;
+        setSubmittedWithdrawal(record);
+        try {
+          const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+          const existing = raw ? JSON.parse(raw) : [];
+          const updated = [record, ...existing.filter((x: any) => x.id !== record.id)];
+          localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+        } catch {
+          // ignore
+        }
         onWithdrawSuccess(withdrawAmount, 'Binance Pay', receiverBinanceId.trim());
+        window.dispatchEvent(new CustomEvent('cb_withdrawals_updated'));
       } else {
         setErrorMsg(data.error || 'Withdrawal submission failed.');
       }
@@ -104,15 +117,30 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       sound.playWin();
       const mockWithdrawal = {
         id: 'WTH-' + Math.floor(10000 + Math.random() * 90000),
+        userId: 'usr_johirul',
+        userName,
+        userEmail,
         amount: withdrawAmount,
         currency: 'USD',
         method: 'Binance Pay',
         address: receiverBinanceId.trim(),
+        receiverBinanceId: receiverBinanceId.trim(),
+        binanceId: receiverBinanceId.trim(),
+        network: 'Binance Pay UID Transfer',
         status: 'PENDING',
         createdAt: Date.now(),
       };
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+        const existing = raw ? JSON.parse(raw) : [];
+        const updated = [mockWithdrawal, ...existing.filter((x: any) => x.id !== mockWithdrawal.id)];
+        localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
       setSubmittedWithdrawal(mockWithdrawal);
       onWithdrawSuccess(withdrawAmount, 'Binance Pay', receiverBinanceId.trim());
+      window.dispatchEvent(new CustomEvent('cb_withdrawals_updated'));
     } finally {
       setIsSubmitting(false);
     }

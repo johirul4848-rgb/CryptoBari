@@ -60,11 +60,17 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   onBackToTrade,
   onConvertToLive,
 }) => {
-  // 1. Auto-generated Referral ID for this user (derived or generated & persisted)
+  // 1. Auto-generated Referral ID for this user (derived or generated & persisted without dashes, e.g. CB67022)
   const [myReferralCode, setMyReferralCode] = useState<string>(() => {
     const saved = localStorage.getItem('cb_my_referral_id');
-    if (saved) return saved;
-    const generated = `CB-${Math.floor(10000 + Math.random() * 90000)}`;
+    if (saved) {
+      const clean = saved.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      if (clean !== saved) {
+        localStorage.setItem('cb_my_referral_id', clean);
+      }
+      return clean;
+    }
+    const generated = `CB${Math.floor(10000 + Math.random() * 90000)}`;
     localStorage.setItem('cb_my_referral_id', generated);
     return generated;
   });
@@ -658,28 +664,28 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
               // Active Input Form
               <form onSubmit={handleActivateSponsor} className="mt-3 space-y-3">
                 <div>
-                  <label className="text-[11px] font-bold text-slate-300 mb-1 block">
+                  <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">
                     Enter Friend's / Sponsor's Referral Code
                   </label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2.5">
                     <input
                       id="referral-sponsor-input"
                       type="text"
                       value={sponsorInput}
                       onChange={(e) => {
-                        setSponsorInput(e.target.value.toUpperCase());
+                        setSponsorInput(e.target.value.toUpperCase().replace(/[^A-Za-z0-9]/g, ''));
                         setSponsorError('');
                       }}
-                      placeholder="e.g. CB-PRO88, CB-VIP10"
-                      className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#0b101c] border border-slate-700 focus:border-amber-400 text-white font-mono font-bold text-sm tracking-wider uppercase placeholder:text-slate-600 focus:outline-none transition-colors"
+                      placeholder="e.g. CB67022, CB99201"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#0b101c] border border-slate-700 focus:border-amber-400 text-white font-mono font-bold text-sm tracking-wider uppercase placeholder:text-slate-600 focus:outline-none transition-colors"
                     />
                     <button
                       id="referral-activate-submit-btn"
                       type="submit"
-                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 active:scale-95 text-slate-950 font-black text-xs cursor-pointer transition-all shadow-md shrink-0 flex items-center gap-1.5"
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 active:scale-98 text-slate-950 font-black text-xs sm:text-sm cursor-pointer transition-all shadow-[0_4px_16px_rgba(245,158,11,0.25)] flex items-center justify-center gap-2"
                     >
-                      <Gift className="w-3.5 h-3.5 text-slate-950" />
-                      <span>Activate & Claim $10</span>
+                      <Gift className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+                      <span>Activate & Claim $10 Bonus</span>
                     </button>
                   </div>
                 </div>

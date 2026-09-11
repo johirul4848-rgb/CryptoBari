@@ -1,7 +1,13 @@
 import express from 'express';
 import path from 'path';
+import http from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
+import { otcPriceEngine } from './src/services/otcEngine';
+import { resolveUnderlyingSymbol, OTC_BINANCE_MAPPINGS } from './src/constants/otcMappings';
+import { generateInitialLiveSymbols, ALL_LIVE_CONFIGS, resolveLiveMarketSymbol } from './src/constants/liveMarketPairs';
+import { Timeframe } from './src/types';
 
 dotenv.config();
 
@@ -35,6 +41,8 @@ export interface WithdrawalRequestRecord {
   currency: string;
   method: string;
   address: string;
+  binanceId?: string;
+  receiverBinanceId?: string;
   network: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: number;
@@ -117,6 +125,8 @@ interface TradeRecord {
     provider: string;
     market: string;
     symbol: string;
+    timestamp?: number;
+    entryPrice?: number;
   };
   createdAt: number;
 }
@@ -367,62 +377,33 @@ async function startServer() {
     },
   ];
 
-  // Initial seed symbols
-  const initialSymbols: ServerMarketSymbol[] = [
-    { symbol: 'BTCUSDT', baseAsset: 'BTC', quoteAsset: 'USDT', displayPair: 'BTC/USDT', price: 88540.20, priceChangePercent: 2.34, high24h: 89400.00, low24h: 86320.50, volume24h: 34521.8, quoteVolume24h: 3045230000, pricePrecision: 2, payoutRate: 88, enabled: true, minInvestment: 1, maxInvestment: 2000, isFavorite: true },
-    { symbol: 'ETHUSDT', baseAsset: 'ETH', quoteAsset: 'USDT', displayPair: 'ETH/USDT', price: 2465.45, priceChangePercent: 1.82, high24h: 2510.00, low24h: 2410.20, volume24h: 184520.4, quoteVolume24h: 454320000, pricePrecision: 2, payoutRate: 86, enabled: true, minInvestment: 1, maxInvestment: 2000, isFavorite: true },
-    { symbol: 'SOLUSDT', baseAsset: 'SOL', quoteAsset: 'USDT', displayPair: 'SOL/USDT', price: 154.30, priceChangePercent: 4.15, high24h: 158.40, low24h: 147.80, volume24h: 843210.0, quoteVolume24h: 129432000, pricePrecision: 2, payoutRate: 85, enabled: true, minInvestment: 1, maxInvestment: 2000, isFavorite: true },
-    { symbol: 'BNBUSDT', baseAsset: 'BNB', quoteAsset: 'USDT', displayPair: 'BNB/USDT', price: 585.10, priceChangePercent: -0.42, high24h: 592.00, low24h: 579.50, volume24h: 92340.5, quoteVolume24h: 54100000, pricePrecision: 2, payoutRate: 84, enabled: true, minInvestment: 1, maxInvestment: 1500 },
-    { symbol: 'XRPUSDT', baseAsset: 'XRP', quoteAsset: 'USDT', displayPair: 'XRP/USDT', price: 0.6145, priceChangePercent: 3.12, high24h: 0.6350, low24h: 0.5890, volume24h: 45210000.0, quoteVolume24h: 27500000, pricePrecision: 4, payoutRate: 83, enabled: true, minInvestment: 1, maxInvestment: 1500 },
-    { symbol: 'DOGEUSDT', baseAsset: 'DOGE', quoteAsset: 'USDT', displayPair: 'DOGE/USDT', price: 0.12450, priceChangePercent: 5.60, high24h: 0.13100, low24h: 0.11600, volume24h: 120540000.0, quoteVolume24h: 14800000, pricePrecision: 5, payoutRate: 82, enabled: true, minInvestment: 1, maxInvestment: 1000 },
-    { symbol: 'ADAUSDT', baseAsset: 'ADA', quoteAsset: 'USDT', displayPair: 'ADA/USDT', price: 0.3840, priceChangePercent: -1.15, high24h: 0.3950, low24h: 0.3780, volume24h: 25410000.0, quoteVolume24h: 9800000, pricePrecision: 4, payoutRate: 82, enabled: true, minInvestment: 1, maxInvestment: 1000 },
-    { symbol: 'TRXUSDT', baseAsset: 'TRX', quoteAsset: 'USDT', displayPair: 'TRX/USDT', price: 0.1582, priceChangePercent: 0.65, high24h: 0.1610, low24h: 0.1560, volume24h: 38900000.0, quoteVolume24h: 6150000, pricePrecision: 4, payoutRate: 80, enabled: true, minInvestment: 1, maxInvestment: 1000 },
-    { symbol: 'LINKUSDT', baseAsset: 'LINK', quoteAsset: 'USDT', displayPair: 'LINK/USDT', price: 11.85, priceChangePercent: 1.45, high24h: 12.20, low24h: 11.45, volume24h: 1845000.0, quoteVolume24h: 21850000, pricePrecision: 2, payoutRate: 84, enabled: true, minInvestment: 1, maxInvestment: 1500 },
-    { symbol: 'AVAXUSDT', baseAsset: 'AVAX', quoteAsset: 'USDT', displayPair: 'AVAX/USDT', price: 24.75, priceChangePercent: -2.10, high24h: 25.80, low24h: 24.10, volume24h: 2840000.0, quoteVolume24h: 70450000, pricePrecision: 2, payoutRate: 85, enabled: true, minInvestment: 1, maxInvestment: 1500 },
-  ];
+  // Initial seed symbols: Comprehensive live curated list (100% Live Spot Crypto Pairs)
+  const initialSymbols: ServerMarketSymbol[] = generateInitialLiveSymbols().map(s => ({
+    symbol: s.symbol,
+    baseAsset: s.baseAsset,
+    quoteAsset: s.quoteAsset,
+    displayPair: s.displayPair,
+    price: s.price,
+    priceChangePercent: s.priceChangePercent,
+    high24h: s.high24h,
+    low24h: s.low24h,
+    volume24h: s.volume24h,
+    quoteVolume24h: s.quoteVolume24h,
+    pricePrecision: s.pricePrecision,
+    payoutRate: s.payoutRate,
+    enabled: true,
+    minInvestment: s.minInvestment || 1,
+    maxInvestment: s.maxInvestment || 2000,
+    isFavorite: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'SUIUSDT', 'PEPEUSDT', 'BNBUSDT'].includes(s.symbol),
+    status: 'TRADING',
+    category: s.category,
+  }));
   cachedSymbols = initialSymbols;
   initialSymbols.forEach(s => latestPrices.set(s.symbol, s.price));
 
   // Dynamic Binance symbol refresh
   async function refreshBinanceSymbols() {
     try {
-      // 1. Fetch Exchange Info to get precision, tick size, and valid spot pairs
-      let exchangeMap = new Map<string, { tickSize: number; precision: number; minQty: number; status: string }>();
-      try {
-        const exRes = await fetch('https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT');
-        if (exRes.ok) {
-          const exData: any = await exRes.json();
-          if (Array.isArray(exData.symbols)) {
-            for (const s of exData.symbols) {
-              if (s.status === 'TRADING' && s.isSpotTradingAllowed !== false) {
-                let tickSize = 0.01;
-                let precision = 2;
-                let minQty = 0.001;
-
-                if (Array.isArray(s.filters)) {
-                  const pf = s.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
-                  if (pf && pf.tickSize) {
-                    tickSize = parseFloat(pf.tickSize);
-                    const tickStr = pf.tickSize.replace(/0+$/, '');
-                    const dot = tickStr.indexOf('.');
-                    precision = dot !== -1 ? tickStr.length - dot - 1 : 0;
-                  }
-                  const lf = s.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-                  if (lf && lf.minQty) {
-                    minQty = parseFloat(lf.minQty);
-                  }
-                }
-
-                exchangeMap.set(s.symbol, { tickSize, precision, minQty, status: s.status });
-              }
-            }
-          }
-        }
-      } catch {
-        // use fallback precision if exchangeInfo fails
-      }
-
-      // 2. Fetch 24hr tickers
       const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
       if (res.ok) {
         const rawTickers: Array<{
@@ -435,54 +416,24 @@ async function startServer() {
           quoteVolume: string;
         }> = await res.json();
 
-        const usdtTickers = rawTickers
-          .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.quoteVolume) > 1000000)
-          .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-          .slice(0, 100);
+        const tickerMap = new Map(rawTickers.map(t => [t.symbol, t]));
 
-        if (usdtTickers.length > 0) {
-          cachedSymbols = usdtTickers.map(t => {
-            const base = t.symbol.replace('USDT', '');
-            const price = parseFloat(t.lastPrice);
-            latestPrices.set(t.symbol, price);
-
-            const meta = exchangeMap.get(t.symbol);
-            let precision = meta ? meta.precision : 2;
-            if (!meta) {
-              if (price < 0.0001) precision = 8;
-              else if (price < 0.01) precision = 6;
-              else if (price < 1) precision = 4;
-              else if (price < 10) precision = 3;
-            }
-
-            // Existing payout rate or default 85%
-            const existing = cachedSymbols.find(s => s.symbol === t.symbol);
-            const payoutRate = existing ? existing.payoutRate : (['BTCUSDT', 'ETHUSDT'].includes(t.symbol) ? 88 : 85);
-
-            return {
-              symbol: t.symbol,
-              baseAsset: base,
-              quoteAsset: 'USDT',
-              displayPair: `${base}/USDT`,
-              price,
-              priceChangePercent: parseFloat(t.priceChangePercent),
-              high24h: parseFloat(t.highPrice),
-              low24h: parseFloat(t.lowPrice),
-              volume24h: parseFloat(t.volume),
-              quoteVolume24h: parseFloat(t.quoteVolume),
-              pricePrecision: precision,
-              tickSize: meta ? meta.tickSize : 1 / Math.pow(10, precision),
-              minQty: meta ? meta.minQty : 0.001,
-              status: meta ? meta.status : 'TRADING',
-              payoutRate,
-              enabled: true,
-              minInvestment: 1,
-              maxInvestment: 2000,
-              isFavorite: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'].includes(t.symbol),
-            };
-          });
-          lastSymbolsFetchTime = Date.now();
-        }
+        cachedSymbols.forEach(sym => {
+          const resolved = resolveLiveMarketSymbol(sym.symbol);
+          const t = tickerMap.get(resolved.underlying);
+          if (t) {
+            const rawPrice = parseFloat(t.lastPrice) * resolved.multiplier;
+            const price = Number(rawPrice.toFixed(resolved.precision));
+            sym.price = price;
+            sym.priceChangePercent = parseFloat(t.priceChangePercent);
+            sym.high24h = Number((parseFloat(t.highPrice) * resolved.multiplier).toFixed(resolved.precision));
+            sym.low24h = Number((parseFloat(t.lowPrice) * resolved.multiplier).toFixed(resolved.precision));
+            sym.volume24h = parseFloat(t.volume);
+            sym.quoteVolume24h = parseFloat(t.quoteVolume);
+            latestPrices.set(sym.symbol, price);
+          }
+        });
+        lastSymbolsFetchTime = Date.now();
       }
     } catch {
       // Keep existing cached symbols
@@ -499,19 +450,20 @@ async function startServer() {
     for (const [tradeId, trade] of activeTrades.entries()) {
       if (now >= trade.expiryTimestamp) {
         // Authoritative expiry reached!
-        // Fetch current live price for this symbol
         let currentExitPrice = latestPrices.get(trade.symbol) || trade.entryPrice;
 
-        // Fetch direct current Binance price for ultra-precise settlement
-        try {
-          const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${trade.symbol}`);
-          if (priceRes.ok) {
-            const priceData = await priceRes.json();
-            currentExitPrice = parseFloat(priceData.price);
-            latestPrices.set(trade.symbol, currentExitPrice);
-          }
-        } catch {
-          // Use latest cached
+        const resolved = resolveLiveMarketSymbol(trade.symbol);
+        if (resolved.underlying) {
+          try {
+            const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${resolved.underlying}`);
+            if (priceRes.ok) {
+              const priceData = await priceRes.json();
+              const underlyingPrice = parseFloat(priceData.price);
+              const prec = resolved.precision ?? 2;
+              currentExitPrice = Number((underlyingPrice * resolved.multiplier).toFixed(prec));
+              latestPrices.set(trade.symbol, currentExitPrice);
+            }
+          } catch {}
         }
 
         trade.exitPrice = currentExitPrice;
@@ -574,25 +526,34 @@ async function startServer() {
     res.json(cachedSymbols);
   });
 
-  // Binance Klines proxy with fallback
+  // Binance Klines proxy with fallback (supports both Spot and OTC mappings)
   app.get('/api/markets/klines', async (req, res) => {
-    const symbol = (req.query.symbol as string) || 'BTCUSDT';
+    const rawSymbol = (req.query.symbol as string) || 'BTCUSDT';
     const interval = (req.query.interval as string) || '1m';
     const limit = parseInt((req.query.limit as string) || '100', 10);
 
+    const { underlying, multiplier, precision } = resolveUnderlyingSymbol(rawSymbol);
+
     try {
-      const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${underlying}&interval=${interval}&limit=${limit}`;
       const response = await fetch(binanceUrl);
       if (response.ok) {
         const raw: (string | number)[][] = await response.json();
-        const candles = raw.map(item => ({
-          time: Math.floor(Number(item[0]) / 1000),
-          open: parseFloat(String(item[1])),
-          high: parseFloat(String(item[2])),
-          low: parseFloat(String(item[3])),
-          close: parseFloat(String(item[4])),
-          volume: parseFloat(String(item[5])),
-        }));
+        const prec = precision ?? (rawSymbol.endsWith('_OTC') ? 5 : 2);
+        const candles = raw.map(item => {
+          const o = parseFloat(String(item[1])) * multiplier;
+          const h = parseFloat(String(item[2])) * multiplier;
+          const l = parseFloat(String(item[3])) * multiplier;
+          const c = parseFloat(String(item[4])) * multiplier;
+          return {
+            time: Math.floor(Number(item[0]) / 1000),
+            open: Number(o.toFixed(prec)),
+            high: Number(h.toFixed(prec)),
+            low: Number(l.toFixed(prec)),
+            close: Number(c.toFixed(prec)),
+            volume: parseFloat(String(item[5])),
+          };
+        });
         return res.json(candles);
       }
     } catch {
@@ -680,30 +641,65 @@ async function startServer() {
 
     // Determine Entry Price authoritatively from live market
     let entryPrice = parseFloat(currentPrice);
-    try {
-      const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
-      if (priceRes.ok) {
-        const priceData = await priceRes.json();
-        entryPrice = parseFloat(priceData.price);
-        latestPrices.set(symbol, entryPrice);
+    const isOtcTrade = symbol.endsWith('_OTC') || otcPriceEngine.getPair(symbol) !== undefined;
+
+    if (isOtcTrade) {
+      const resolved = resolveUnderlyingSymbol(symbol);
+      let foundUnderlying = false;
+      if (resolved.underlying) {
+        try {
+          const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${resolved.underlying}`);
+          if (priceRes.ok) {
+            const priceData = await priceRes.json();
+            const underlyingPrice = parseFloat(priceData.price);
+            const prec = resolved.precision ?? 5;
+            entryPrice = Number((underlyingPrice * resolved.multiplier).toFixed(prec));
+            latestPrices.set(symbol, entryPrice);
+            foundUnderlying = true;
+          }
+        } catch {}
       }
-    } catch {
-      // Fall back to client passed price if available
+      if (!foundUnderlying) {
+        const otcPrice = otcPriceEngine.getCurrentPrice(symbol);
+        if (otcPrice > 0) {
+          entryPrice = otcPrice;
+        }
+      }
+    } else {
+      try {
+        const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+        if (priceRes.ok) {
+          const priceData = await priceRes.json();
+          entryPrice = parseFloat(priceData.price);
+          latestPrices.set(symbol, entryPrice);
+        }
+      } catch {
+        // Fall back to client passed price if available
+      }
     }
 
-    const symbolConfig = cachedSymbols.find(s => s.symbol === symbol);
-    const payoutRate = symbolConfig ? symbolConfig.payoutRate : 85;
+    let payoutRate = 85;
+    if (isOtcTrade) {
+      const otcConfig = otcPriceEngine.getPair(symbol);
+      payoutRate = otcConfig ? otcConfig.payoutRate : otcPriceEngine.getDefaultPayout();
+    } else {
+      const symbolConfig = cachedSymbols.find(s => s.symbol === symbol);
+      payoutRate = symbolConfig ? symbolConfig.payoutRate : 85;
+    }
     const potentialPayout = numInvestment * (1 + payoutRate / 100);
 
     const now = Date.now();
     const tradeId = 'CB-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+
+    const otcPair = isOtcTrade ? otcPriceEngine.getPair(symbol) : undefined;
+    const finalDisplayPair = displayPair || (otcPair ? otcPair.displayName : `${symbol.replace('USDT', '')}/USDT`);
 
     const trade: TradeRecord = {
       id: tradeId,
       userId: 'user_default',
       accountMode,
       symbol,
-      displayPair: displayPair || `${symbol.replace('USDT', '')}/USDT`,
+      displayPair: finalDisplayPair,
       direction,
       investment: numInvestment,
       payoutRate,
@@ -716,9 +712,11 @@ async function startServer() {
       profit: 0,
       status: 'ACTIVE',
       priceSource: {
-        provider: 'BINANCE',
-        market: 'SPOT',
+        provider: isOtcTrade ? 'OTC' : 'BINANCE',
+        market: isOtcTrade ? 'SYNTHETIC' : 'SPOT',
         symbol,
+        timestamp: now,
+        entryPrice,
       },
       createdAt: now,
     };
@@ -925,23 +923,46 @@ async function startServer() {
 
   // User submits a withdrawal request
   app.post('/api/wallet/withdraw-request', (req, res) => {
-    const { amount, method, address, network = 'Binance Pay UID Transfer', userId = 'usr_johirul', userName = 'Johirul Islam', userEmail = 'johirul4848@gmail.com' } = req.body;
+    const {
+      amount,
+      method = 'Binance Pay',
+      address,
+      receiverBinanceId,
+      binanceId,
+      currentLiveBalance,
+      network = 'Binance Pay UID Transfer',
+      userId = 'usr_johirul',
+      userName = 'Johirul Islam',
+      userEmail = 'johirul4848@gmail.com',
+    } = req.body;
+
     const numAmount = parseFloat(amount);
-    if (!numAmount || numAmount <= 0) {
+    if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'Valid withdrawal amount required' });
-    }
-    if (walletState.liveBalance < 10) {
-      return res.status(400).json({ error: 'Minimum live balance of $10.00 USD required to submit a withdrawal.' });
     }
     if (numAmount < 10) {
       return res.status(400).json({ error: 'Minimum withdrawal amount is $10.00 USD. Requests under $10 are not permitted.' });
     }
-    if (walletState.liveBalance < numAmount) {
-      return res.status(400).json({ error: 'Insufficient Live Balance for this withdrawal request' });
+
+    // Sync client-side live balance if provided
+    const clientBal = typeof currentLiveBalance === 'number' ? currentLiveBalance : parseFloat(currentLiveBalance);
+    if (!isNaN(clientBal) && clientBal > walletState.liveBalance) {
+      walletState.liveBalance = clientBal;
+    }
+
+    const effectiveBalance = Math.max(walletState.liveBalance, !isNaN(clientBal) ? clientBal : 0);
+
+    if (effectiveBalance < 10) {
+      return res.status(400).json({ error: 'Minimum live balance of $10.00 USD required to submit a withdrawal.' });
+    }
+    if (effectiveBalance < numAmount) {
+      return res.status(400).json({ error: `Insufficient Live Balance ($${effectiveBalance.toFixed(2)} USD available) for this withdrawal request.` });
     }
 
     // Deduct from live balance immediately into pending escrow
-    walletState.liveBalance -= numAmount;
+    walletState.liveBalance = Math.max(0, effectiveBalance - numAmount);
+
+    const targetBinanceId = (receiverBinanceId || binanceId || address || '').toString().trim() || '794380283';
 
     const newWithdrawal: WithdrawalRequestRecord = {
       id: 'WTH-' + Math.floor(10000 + Math.random() * 90000),
@@ -951,8 +972,10 @@ async function startServer() {
       amount: numAmount,
       currency: 'USD',
       method: method || 'Binance Pay',
-      address: address || 'PayID: 794380283',
-      network: 'Binance Pay UID Transfer',
+      address: targetBinanceId,
+      binanceId: targetBinanceId,
+      receiverBinanceId: targetBinanceId,
+      network: network || 'Binance Pay UID Transfer',
       status: 'PENDING',
       createdAt: Date.now(),
     };
@@ -1360,6 +1383,203 @@ async function startServer() {
     });
   });
 
+  // ==========================================
+  // OTC MARKET & ADMIN OTC MANAGEMENT ENDPOINTS
+  // ==========================================
+
+  // 1. Get all OTC pairs
+  app.get('/api/otc/pairs', (req, res) => {
+    res.json(otcPriceEngine.getAllPairs());
+  });
+
+  // 2. Get OTC historical klines
+  app.get('/api/otc/klines', (req, res) => {
+    const symbol = (req.query.symbol as string) || 'EURUSD_OTC';
+    const interval = ((req.query.interval as string) || '1m') as Timeframe;
+    const limit = parseInt((req.query.limit as string) || '150', 10);
+    const candles = otcPriceEngine.getHistoricalCandles(symbol, interval, limit);
+    res.json(candles);
+  });
+
+  // 3. Get current OTC price
+  app.get('/api/otc/price', (req, res) => {
+    const symbol = (req.query.symbol as string) || 'EURUSD_OTC';
+    const price = otcPriceEngine.getCurrentPrice(symbol);
+    res.json({ symbol, price, timestamp: Date.now() });
+  });
+
+  // 4. Admin - Get all OTC pairs with configuration
+  app.get('/api/admin/otc/pairs', (req, res) => {
+    res.json({
+      pairs: otcPriceEngine.getAllPairs(),
+      defaultPayout: otcPriceEngine.getDefaultPayout(),
+      maxAllowedPayout: 93,
+    });
+  });
+
+  // 5. Admin - Create new OTC pair
+  app.post('/api/admin/otc/pairs', (req, res) => {
+    const { symbol, displayName, baseAsset, quoteAsset, category, payoutRate, price, pricePrecision } = req.body;
+    if (!symbol) {
+      return res.status(400).json({ error: 'Pair symbol is required' });
+    }
+    const created = otcPriceEngine.createPair({
+      symbol,
+      displayName,
+      baseAsset,
+      quoteAsset,
+      category,
+      payoutRate: Math.min(93, Number(payoutRate) || 93),
+      price: Number(price) || 1.0,
+      pricePrecision: pricePrecision !== undefined ? Number(pricePrecision) : 5,
+    });
+    res.json({ success: true, pair: created });
+  });
+
+  // 6. Admin - Update OTC pair
+  app.put('/api/admin/otc/pairs/:id', (req, res) => {
+    const { id } = req.params;
+    const { displayName, category, sortOrder, payoutRate, status, enabled } = req.body;
+    const updated = otcPriceEngine.updatePair(id, {
+      ...(displayName !== undefined && { displayName }),
+      ...(category !== undefined && { category }),
+      ...(sortOrder !== undefined && { sortOrder: Number(sortOrder) }),
+      ...(payoutRate !== undefined && { payoutRate: Math.min(93, Number(payoutRate)) }),
+      ...(status !== undefined && { status }),
+      ...(enabled !== undefined && { enabled: Boolean(enabled) }),
+    });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'OTC Pair not found' });
+    }
+    res.json({ success: true, pair: updated });
+  });
+
+  // 7. Admin - Delete OTC pair
+  app.delete('/api/admin/otc/pairs/:id', (req, res) => {
+    const { id } = req.params;
+    const deleted = otcPriceEngine.deletePair(id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'OTC Pair not found' });
+    }
+    res.json({ success: true, message: 'OTC Pair deleted successfully' });
+  });
+
+  // 8. Admin - Set Global Default OTC Payout
+  app.post('/api/admin/otc/default-payout', (req, res) => {
+    const { rate } = req.body;
+    const newRate = otcPriceEngine.setDefaultPayout(Number(rate) || 93);
+    res.json({ success: true, defaultPayout: newRate, maxAllowed: 93 });
+  });
+
+  // Create HTTP Server to host both Express REST and WebSocket Server
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ server, path: '/ws/otc' });
+
+  interface ClientSubscription {
+    symbol?: string;
+    timeframe?: Timeframe;
+    subscribeTickers?: boolean;
+  }
+
+  const clientSubs = new Map<WebSocket, ClientSubscription>();
+
+  wss.on('connection', (ws) => {
+    clientSubs.set(ws, { symbol: 'EURUSD_OTC', timeframe: '1m', subscribeTickers: true });
+
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        const sub = clientSubs.get(ws) || {};
+
+        if (data.type === 'subscribe') {
+          if (data.symbol) sub.symbol = data.symbol;
+          if (data.timeframe) sub.timeframe = data.timeframe;
+          clientSubs.set(ws, sub);
+
+          // Send confirmation & initial candles
+          ws.send(JSON.stringify({
+            type: 'subscribed',
+            symbol: sub.symbol,
+            timeframe: sub.timeframe,
+          }));
+
+          const history = otcPriceEngine.getHistoricalCandles(sub.symbol!, sub.timeframe || '1m', 150);
+          ws.send(JSON.stringify({
+            type: 'history',
+            symbol: sub.symbol,
+            timeframe: sub.timeframe,
+            candles: history,
+          }));
+        } else if (data.type === 'subscribe_tickers') {
+          sub.subscribeTickers = true;
+          clientSubs.set(ws, sub);
+          ws.send(JSON.stringify({
+            type: 'tickers',
+            symbols: otcPriceEngine.getAllAsMarketSymbols(),
+          }));
+        }
+      } catch (e) {
+        // Safe handle
+      }
+    });
+
+    ws.on('close', () => {
+      clientSubs.delete(ws);
+    });
+  });
+
+  // Stream OTC ticks to connected clients
+  otcPriceEngine.onTick((tick) => {
+    const payload = JSON.stringify({
+      type: 'tick',
+      symbol: tick.symbol,
+      price: tick.price,
+      timestamp: tick.timestamp,
+      direction: tick.direction,
+      changePercent: tick.changePercent,
+      volume: tick.volume,
+    });
+
+    for (const [ws, sub] of clientSubs.entries()) {
+      if (ws.readyState === WebSocket.OPEN && sub.symbol === tick.symbol) {
+        ws.send(payload);
+      }
+    }
+  });
+
+  // Stream OTC candle updates to connected clients
+  otcPriceEngine.onCandle((candle, isNewBar, symbol, timeframe) => {
+    const payload = JSON.stringify({
+      type: 'candle',
+      symbol,
+      timeframe,
+      candle,
+      isNewBar,
+    });
+
+    for (const [ws, sub] of clientSubs.entries()) {
+      if (ws.readyState === WebSocket.OPEN && sub.symbol === symbol && sub.timeframe === timeframe) {
+        ws.send(payload);
+      }
+    }
+  });
+
+  // Broadcast ticker updates periodically
+  setInterval(() => {
+    if (clientSubs.size === 0) return;
+    const payload = JSON.stringify({
+      type: 'tickers',
+      symbols: otcPriceEngine.getAllAsMarketSymbols(),
+    });
+
+    for (const [ws, sub] of clientSubs.entries()) {
+      if (ws.readyState === WebSocket.OPEN && sub.subscribeTickers) {
+        ws.send(payload);
+      }
+    }
+  }, 1000);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -1375,7 +1595,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`CryptoBari Trading Platform server running on http://0.0.0.0:${PORT}`);
   });
 }

@@ -5,11 +5,34 @@ export type AccountMode = 'DEMO' | 'LIVE';
 export type ConnectionStatus = 'LIVE' | 'RECONNECTING' | 'OFFLINE' | 'DELAYED';
 export type Timeframe = '1s' | '5s' | '10s' | '15s' | '30s' | '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d';
 
+export type OtcCategory = 'FOREX' | 'CRYPTO' | 'COMMODITY' | 'INDEX' | 'OTHER';
+
+export interface OtcAsset {
+  id: string;
+  symbol: string;         // e.g. 'EURUSD_OTC', 'BTCUSDT_OTC'
+  displayName: string;    // e.g. 'EUR/USD OTC'
+  baseAsset: string;      // 'EUR'
+  quoteAsset: string;     // 'USD'
+  category: OtcCategory;
+  type: 'OTC';
+  status: 'ACTIVE' | 'INACTIVE';
+  payoutRate: number;     // max 93%, default 93%
+  priceSource: string;    // 'OTC_SYNTHETIC'
+  enabled: boolean;
+  sortOrder: number;
+  price: number;
+  priceChangePercent: number;
+  pricePrecision: number;
+  volatility?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface MarketSymbol {
-  symbol: string;         // e.g. 'BTCUSDT'
-  baseAsset: string;      // e.g. 'BTC'
-  quoteAsset: string;     // e.g. 'USDT'
-  displayPair: string;    // e.g. 'BTC/USDT'
+  symbol: string;         // e.g. 'BTCUSDT' or 'EURUSD_OTC'
+  baseAsset: string;      // e.g. 'BTC' or 'EUR'
+  quoteAsset: string;     // e.g. 'USDT' or 'USD'
+  displayPair: string;    // e.g. 'BTC/USDT' or 'EUR/USD OTC'
   price: number;
   priceChangePercent: number;
   high24h: number;
@@ -20,12 +43,17 @@ export interface MarketSymbol {
   quantityPrecision?: number;
   tickSize?: number;
   minQty?: number;
-  status?: string;        // e.g. 'TRADING'
-  payoutRate: number;     // e.g. 85 (%)
+  status?: string;        // e.g. 'TRADING' or 'ACTIVE'
+  payoutRate: number;     // e.g. 85 or 93 (%)
   enabled: boolean;
   minInvestment: number;
   maxInvestment: number;
   isFavorite?: boolean;
+  isOtc?: boolean;
+  marketType?: 'REAL' | 'OTC';
+  category?: OtcCategory;
+  otcCategory?: OtcCategory | string;
+  priceSource?: string;
 }
 
 export interface CandleData {

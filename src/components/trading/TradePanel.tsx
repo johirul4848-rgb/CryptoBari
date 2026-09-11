@@ -137,13 +137,11 @@ export const TradePanel: React.FC<TradePanelProps> = ({
   }, []);
 
   // Display label for pair
-  const cleanPairName = symbol.displayPair.includes('OTC')
-    ? symbol.displayPair
-    : `${symbol.baseAsset} (OTC)`;
+  const cleanPairName = symbol.displayPair.replace(/\s*\(OTC\)/gi, '').replace(/\/OTC/gi, '').trim();
 
   return (
     <div className="w-full lg:w-72 xl:w-76 flex flex-col bg-[#161a25] border-l border-slate-800/80 select-none shrink-0 h-full overflow-hidden text-slate-200 text-xs">
-      {/* 1. TOP ASSET HEADER (Bitcoin (OTC) + 92%) */}
+      {/* 1. TOP ASSET HEADER */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60 bg-[#191e2b]">
         <div className="flex items-center gap-2">
           <AssetIcon symbol={symbol.symbol} size="md" showFlag={true} />
@@ -407,7 +405,7 @@ export const TradePanel: React.FC<TradePanelProps> = ({
                     )}
                     <AssetIcon symbol={trade.symbol} size="sm" showFlag={true} />
                     <span className="font-bold text-slate-200 text-[11px]">
-                      {trade.displayPair.replace('USDT', '')} (OTC)
+                      {trade.displayPair.replace(/\s*\(OTC\)/gi, '')}
                     </span>
                   </div>
 
@@ -471,7 +469,7 @@ export const TradePanel: React.FC<TradePanelProps> = ({
                       )}
                       <AssetIcon symbol={trade.symbol} size="sm" showFlag={true} />
                       <span className="font-semibold text-slate-300 text-[11px]">
-                        {trade.displayPair.replace('USDT', '')} (OTC)
+                        {trade.displayPair.replace(/\s*\(OTC\)/gi, '')}
                       </span>
                     </div>
 

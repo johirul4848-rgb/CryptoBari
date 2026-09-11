@@ -12,6 +12,8 @@ import {
 } from './types';
 import { apiService } from './services/api';
 import { binanceMarketData } from './services/binanceMarketData';
+import { otcPriceEngine } from './services/otcEngine';
+import { generateInitialLiveSymbols } from './constants/liveMarketPairs';
 import { Header } from './components/common/Header';
 import { Sidebar, NavTab } from './components/common/Sidebar';
 import { MobileBottomNav } from './components/common/MobileBottomNav';
@@ -41,24 +43,9 @@ import { AuthModal } from './components/auth/AuthModal';
 import { sound } from './utils/audio';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
-// Default initial symbol
-const DEFAULT_SYMBOL: MarketSymbol = {
-  symbol: 'BTCUSDT',
-  baseAsset: 'BTC',
-  quoteAsset: 'USDT',
-  displayPair: 'BTC/USDT',
-  price: 79902.00,
-  priceChangePercent: 0.28,
-  high24h: 80550.00,
-  low24h: 78900.00,
-  volume24h: 38402.15,
-  quoteVolume24h: 3068392104.22,
-  payoutRate: 85,
-  enabled: true,
-  minInvestment: 1,
-  maxInvestment: 5000,
-  pricePrecision: 2,
-};
+const initialLiveList = generateInitialLiveSymbols();
+// Default initial symbol: Top live pair (e.g. BTC/USDT or EUR/USD)
+const DEFAULT_SYMBOL: MarketSymbol = initialLiveList[0];
 
 export const App: React.FC = () => {
   // Authentication & Guest State
@@ -79,13 +66,28 @@ export const App: React.FC = () => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'area'>('candles');
 
-  // Market & Trading State
-  const [symbols, setSymbols] = useState<MarketSymbol[]>([DEFAULT_SYMBOL]);
-  const [activeSymbol, setActiveSymbol] = useState<MarketSymbol>(DEFAULT_SYMBOL);
-  const [openTabs, setOpenTabs] = useState<MarketSymbol[]>([DEFAULT_SYMBOL]);
+  // Market & Trading State: Initialized with Curated Live pairs (Binance + Forex + Trap)
+  const [symbols, setSymbols] = useState<MarketSymbol[]>(() => initialLiveList);
+  const [activeSymbol, setActiveSymbol] = useState<MarketSymbol>(() => DEFAULT_SYMBOL);
+  const [openTabs, setOpenTabs] = useState<MarketSymbol[]>(() => initialLiveList.slice(0, 4));
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
   const [currentPrice, setCurrentPrice] = useState<number>(DEFAULT_SYMBOL.price);
-  const [favorites, setFavorites] = useState<string[]>(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+  const [favorites, setFavorites] = useState<string[]>([
+    'BTCUSDT',
+    'ETHUSDT',
+    'SOLUSDT',
+    'XRPUSDT',
+    'DOGEUSDT',
+    'SUIUSDT',
+    'PEPEUSDT',
+    'BNBUSDT',
+  ]);
+
+  const binanceSymbolsRef = useRef<MarketSymbol[]>([]);
+  const activeSymbolRef = useRef<MarketSymbol>(activeSymbol);
+  useEffect(() => {
+    activeSymbolRef.current = activeSymbol;
+  }, [activeSymbol]);
 
   // Connection & Account
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('LIVE');
@@ -137,33 +139,30 @@ export const App: React.FC = () => {
     platformProfit: 194890.00,
   });
 
-  // Real-time Binance connection status & dynamic symbols discovery
+  // Real-time Binance + Forex live market connection status & dynamic discovery
   useEffect(() => {
     let isMounted = true;
 
-    // Listen to market connection status (LIVE, RECONNECTING, OFFLINE, DELAYED)
+    // Register initial live symbols with Binance market data manager
+    binanceMarketData.registerLiveSymbols(initialLiveList);
+
     const unsubStatus = binanceMarketData.onStatusChange((status) => {
       if (isMounted) {
         setConnectionStatus(status);
       }
     });
 
-    // Discover all Binance Spot pairs dynamically
+    // Discover all Binance and live pairs dynamically
     binanceMarketData
       .discoverAllSpotSymbols()
       .then((fetched) => {
         if (isMounted && fetched && fetched.length > 0) {
+          binanceSymbolsRef.current = fetched;
           setSymbols(fetched);
-          const btc = fetched.find((s) => s.symbol === 'BTCUSDT') || fetched[0];
-          setActiveSymbol(btc);
-          setCurrentPrice(btc.price);
-
-          const initialTabs = fetched.slice(0, 3);
-          setOpenTabs(initialTabs);
         }
       })
       .catch((err) => {
-        console.warn('Could not discover Binance symbols:', err);
+        console.warn('Could not discover live symbols:', err);
       });
 
     // Subscribe to all-ticker live updates (!miniTicker@arr)
@@ -184,6 +183,7 @@ export const App: React.FC = () => {
           const updated = map.get(prev.symbol)!;
           return {
             ...prev,
+            price: updated.price ?? prev.price,
             priceChangePercent: updated.priceChangePercent,
             high24h: updated.high24h,
             low24h: updated.low24h,
@@ -590,6 +590,7 @@ export const App: React.FC = () => {
                       accountMode={accountMode}
                       connectionStatus={connectionStatus}
                       activeTrades={activeTrades.filter(t => t.symbol === activeSymbol.symbol)}
+                      onOpenSelector={() => setIsAssetSelectorOpen(true)}
                       onPriceUpdate={(price) => {
                         setCurrentPrice(price);
                         setActiveSymbol(prev => ({ ...prev, price }));

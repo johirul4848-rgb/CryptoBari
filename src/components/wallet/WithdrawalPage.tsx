@@ -111,6 +111,9 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
           amount: withdrawAmount,
           method: 'Binance Pay',
           address: receiverBinanceId.trim(),
+          receiverBinanceId: receiverBinanceId.trim(),
+          binanceId: receiverBinanceId.trim(),
+          currentLiveBalance: liveBalance,
           network: 'Binance Pay UID Transfer',
           userName,
           userEmail,
@@ -120,8 +123,21 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
       const data = await res.json();
       if (data.success && data.withdrawal) {
         sound.playWin();
-        setSubmittedWithdrawal(data.withdrawal);
-        setPastWithdrawals((prev) => [data.withdrawal, ...prev]);
+        const record = data.withdrawal;
+        setSubmittedWithdrawal(record);
+        setPastWithdrawals((prev) => [record, ...prev]);
+
+        // Sync with shared storage for instant visibility in Admin Panel
+        try {
+          const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+          const existing = raw ? JSON.parse(raw) : [];
+          const updated = [record, ...existing.filter((x: any) => x.id !== record.id)];
+          localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+          window.dispatchEvent(new Event('cb_withdrawals_updated'));
+        } catch {
+          // ignore
+        }
+
         onWithdrawSuccess(withdrawAmount, 'Binance Pay', receiverBinanceId.trim());
       } else {
         setErrorMsg(data.error || 'Failed to submit withdrawal request.');
@@ -131,16 +147,31 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
       sound.playWin();
       const mockRecord = {
         id: 'WTH-' + Math.floor(100000 + Math.random() * 900000),
+        userName,
+        userEmail,
         amount: withdrawAmount,
         currency: 'USD',
         method: 'Binance Pay',
         address: receiverBinanceId.trim(),
+        receiverBinanceId: receiverBinanceId.trim(),
+        binanceId: receiverBinanceId.trim(),
         network: 'Binance Pay UID Transfer',
-        status: 'PENDING',
+        status: 'PENDING' as const,
         createdAt: Date.now(),
       };
       setSubmittedWithdrawal(mockRecord);
       setPastWithdrawals((prev) => [mockRecord, ...prev]);
+
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+        const existing = raw ? JSON.parse(raw) : [];
+        const updated = [mockRecord, ...existing.filter((x: any) => x.id !== mockRecord.id)];
+        localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+        window.dispatchEvent(new Event('cb_withdrawals_updated'));
+      } catch {
+        // ignore
+      }
+
       onWithdrawSuccess(withdrawAmount, 'Binance Pay', receiverBinanceId.trim());
     } finally {
       setIsSubmitting(false);

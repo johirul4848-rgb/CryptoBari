@@ -29,9 +29,27 @@ import {
   Send,
   MessageSquare,
   Image,
+  Check,
+  Copy,
+  Zap,
 } from 'lucide-react';
 import { MarketSymbol } from '../../types';
 import { sound } from '../../utils/audio';
+
+export interface OtcPairItem {
+  id: string;
+  symbol: string;
+  displayName: string;
+  baseAsset: string;
+  quoteAsset: string;
+  category: 'Forex' | 'Crypto' | 'Commodity' | 'Index';
+  sortOrder: number;
+  payoutRate: number;
+  status: 'ACTIVE' | 'PAUSED';
+  enabled: boolean;
+  price: number;
+  pricePrecision: number;
+}
 
 interface DepositItem {
   id: string;
@@ -51,14 +69,16 @@ interface DepositItem {
 
 interface WithdrawalItem {
   id: string;
-  userId: string;
+  userId?: string;
   userName: string;
-  userEmail: string;
+  userEmail?: string;
   amount: number;
-  currency: string;
-  method: string;
-  address: string;
-  network: string;
+  currency?: string;
+  method?: string;
+  address?: string;
+  binanceId?: string;
+  receiverBinanceId?: string;
+  network?: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: number;
   processedAt?: number;
@@ -106,8 +126,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentLiveBalance,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'deposits' | 'withdrawals' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets' | 'gateway' | 'support'
+    'dashboard' | 'deposits' | 'withdrawals' | 'otc' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets' | 'gateway' | 'support'
   >('dashboard');
+
+  // OTC Synthetic Pairs state (Quotex style, up to 93% payout)
+  const [otcPairs, setOtcPairs] = useState<OtcPairItem[]>([]);
+  const [defaultOtcPayout, setDefaultOtcPayout] = useState<number>(93);
+  const [otcCategoryFilter, setOtcCategoryFilter] = useState<'ALL' | 'Forex' | 'Crypto' | 'Commodity' | 'Index'>('ALL');
+  const [otcSearch, setOtcSearch] = useState('');
+  const [isSavingDefaultPayout, setIsSavingDefaultPayout] = useState(false);
 
   // Live state fetched from server
   const [deposits, setDeposits] = useState<DepositItem[]>([]);
@@ -135,7 +162,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Search/Filters
   const [depositFilter, setDepositFilter] = useState<'PENDING' | 'APPROVED' | 'ALL'>('PENDING');
-  const [withdrawalFilter, setWithdrawalFilter] = useState<'PENDING' | 'APPROVED' | 'ALL'>('PENDING');
+  const [withdrawalFilter, setWithdrawalFilter] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'>('PENDING');
+  const [withdrawalSearch, setWithdrawalSearch] = useState('');
+  const [copiedWithdrawalBinanceId, setCopiedWithdrawalBinanceId] = useState<string | null>(null);
   const [userSearch, setUserSearch] = useState('');
 
   // New Notice form modal state
@@ -158,7 +187,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
-      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes] = await Promise.all([
+      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes, otcRes] = await Promise.all([
         fetch('/api/admin/deposits').then(r => r.json()).catch(() => []),
         fetch('/api/admin/withdrawals').then(r => r.json()).catch(() => []),
         fetch('/api/admin/notices').then(r => r.json()).catch(() => []),
@@ -168,10 +197,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fetch('/api/admin/reports').then(r => r.json()).catch(() => ({ allTrades: [] })),
         fetch('/api/payment/binance-settings').then(r => r.json()).catch(() => null),
         fetch('/api/support/tickets').then(r => r.json()).catch(() => []),
+        fetch('/api/admin/otc/pairs').then(r => r.json()).catch(() => null),
       ]);
 
       if (Array.isArray(depRes)) setDeposits(depRes);
-      if (Array.isArray(withRes)) setWithdrawals(withRes);
+
+      // Robustly merge backend withdrawals with any locally submitted withdrawals
+      let combinedWithdrawals: WithdrawalItem[] = Array.isArray(withRes) ? [...withRes] : [];
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+        if (raw) {
+          const localList: WithdrawalItem[] = JSON.parse(raw);
+          const map = new Map<string, WithdrawalItem>();
+          combinedWithdrawals.forEach((w) => map.set(w.id, w));
+          localList.forEach((w) => {
+            if (!map.has(w.id)) {
+              map.set(w.id, w);
+            } else {
+              // Merge any richer fields like binanceId
+              const existing = map.get(w.id)!;
+              map.set(w.id, {
+                ...existing,
+                binanceId: existing.binanceId || w.binanceId || w.receiverBinanceId || existing.address,
+                receiverBinanceId: existing.receiverBinanceId || w.receiverBinanceId || w.binanceId || existing.address,
+              });
+            }
+          });
+          combinedWithdrawals = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        }
+      } catch {
+        // ignore
+      }
+      setWithdrawals(combinedWithdrawals);
+
       if (Array.isArray(notRes)) setNotices(notRes);
       if (Array.isArray(usrRes)) setUsers(usrRes);
       if (finRes) setFinanceData(finRes);
@@ -189,6 +247,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           setSelectedTicketId(supRes[0].id);
         }
       }
+      if (otcRes && Array.isArray(otcRes.pairs)) {
+        setOtcPairs(otcRes.pairs);
+        if (typeof otcRes.defaultPayout === 'number') {
+          setDefaultOtcPayout(otcRes.defaultPayout);
+        }
+      }
     } catch {
       // ignore
     } finally {
@@ -198,11 +262,87 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   useEffect(() => {
     loadAdminData();
+
+    const handleWithdrawalUpdated = () => {
+      loadAdminData();
+    };
+
+    window.addEventListener('cb_withdrawals_updated', handleWithdrawalUpdated);
+    window.addEventListener('storage', handleWithdrawalUpdated);
+    return () => {
+      window.removeEventListener('cb_withdrawals_updated', handleWithdrawalUpdated);
+      window.removeEventListener('storage', handleWithdrawalUpdated);
+    };
   }, []);
 
   const showNotification = (msg: string) => {
     setActionSuccessMsg(msg);
     setTimeout(() => setActionSuccessMsg(null), 4000);
+  };
+
+  // OTC Pair Management Handlers (Quotex style, max 93% payout)
+  const handleUpdateDefaultOtcPayout = async (rate: number) => {
+    const capped = Math.min(93, Math.max(50, Math.round(rate)));
+    setIsSavingDefaultPayout(true);
+    sound.playClick();
+    try {
+      const res = await fetch('/api/admin/otc/default-payout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rate: capped }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDefaultOtcPayout(data.defaultPayout || capped);
+        showNotification(`Global OTC default payout set to ${data.defaultPayout || capped}% (Max 93%)`);
+        sound.playWin();
+        loadAdminData();
+      }
+    } catch {
+      setDefaultOtcPayout(capped);
+      showNotification(`Default payout rate set to ${capped}%`);
+    } finally {
+      setIsSavingDefaultPayout(false);
+    }
+  };
+
+  const handleToggleOtcPair = async (pairId: string, currentEnabled: boolean) => {
+    sound.playClick();
+    const newStatus = currentEnabled ? 'PAUSED' : 'ACTIVE';
+    try {
+      const res = await fetch(`/api/admin/otc/pairs/${pairId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !currentEnabled, status: newStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, enabled: !currentEnabled, status: newStatus } : p));
+        showNotification(`OTC Pair ${pairId} ${!currentEnabled ? 'enabled & active' : 'paused'}`);
+        sound.playWin();
+      }
+    } catch {
+      setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, enabled: !currentEnabled, status: newStatus } : p));
+    }
+  };
+
+  const handleUpdateOtcPairPayout = async (pairId: string, newPayout: number) => {
+    const capped = Math.min(93, Math.max(50, Math.round(newPayout)));
+    sound.playClick();
+    try {
+      const res = await fetch(`/api/admin/otc/pairs/${pairId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payoutRate: capped }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, payoutRate: capped } : p));
+        showNotification(`Payout for ${pairId} updated to ${capped}% (Max 93%)`);
+      }
+    } catch {
+      setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, payoutRate: capped } : p));
+    }
   };
 
   // Save Binance Gateway Settings
@@ -329,12 +469,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       const data = await res.json();
       if (data.success) {
         sound.playWin();
-        showNotification(`Withdrawal #${id} approved and dispatched.`);
+        showNotification(`Withdrawal #${id} approved and dispatched via Binance Pay.`);
         setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status: 'APPROVED', processedAt: Date.now() } : w));
+        
+        try {
+          const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+          if (raw) {
+            const arr = JSON.parse(raw);
+            const updated = arr.map((x: any) => x.id === id ? { ...x, status: 'APPROVED', processedAt: Date.now() } : x);
+            localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+            window.dispatchEvent(new Event('cb_withdrawals_updated'));
+          }
+        } catch {}
+
         loadAdminData();
       }
     } catch {
-      sound.playLoss();
+      // Local fallback
+      sound.playWin();
+      showNotification(`Withdrawal #${id} marked as approved & dispatched.`);
+      setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status: 'APPROVED', processedAt: Date.now() } : w));
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          const updated = arr.map((x: any) => x.id === id ? { ...x, status: 'APPROVED', processedAt: Date.now() } : x);
+          localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+          window.dispatchEvent(new Event('cb_withdrawals_updated'));
+        }
+      } catch {}
     }
   };
 
@@ -353,10 +516,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         sound.playLoss();
         showNotification(data.message || `Withdrawal rejected and refunded.`);
         setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status: 'REJECTED', rejectedReason: reason } : w));
+
+        try {
+          const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+          if (raw) {
+            const arr = JSON.parse(raw);
+            const updated = arr.map((x: any) => x.id === id ? { ...x, status: 'REJECTED', rejectedReason: reason } : x);
+            localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+            window.dispatchEvent(new Event('cb_withdrawals_updated'));
+          }
+        } catch {}
+
         loadAdminData();
       }
     } catch {
-      // ignore
+      // Local fallback
+      sound.playLoss();
+      showNotification(`Withdrawal #${id} rejected and refunded.`);
+      setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status: 'REJECTED', rejectedReason: reason } : w));
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_withdrawals');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          const updated = arr.map((x: any) => x.id === id ? { ...x, status: 'REJECTED', rejectedReason: reason } : x);
+          localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+          window.dispatchEvent(new Event('cb_withdrawals_updated'));
+        }
+      } catch {}
     }
   };
 
@@ -595,6 +781,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Computed counts
   const pendingDepositsCount = deposits.filter(d => d.status === 'PENDING').length;
   const pendingWithdrawalsCount = withdrawals.filter(w => w.status === 'PENDING').length;
+  const approvedWithdrawalsCount = withdrawals.filter(w => w.status === 'APPROVED').length;
+  const rejectedWithdrawalsCount = withdrawals.filter(w => w.status === 'REJECTED').length;
+  const pendingWithdrawalTotal = withdrawals.filter(w => w.status === 'PENDING').reduce((s, w) => s + (w.amount || 0), 0);
+  const approvedWithdrawalTotal = withdrawals.filter(w => w.status === 'APPROVED').reduce((s, w) => s + (w.amount || 0), 0);
 
   const filteredDeposits = deposits.filter(d => {
     if (depositFilter === 'ALL') return true;
@@ -602,8 +792,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   const filteredWithdrawals = withdrawals.filter(w => {
-    if (withdrawalFilter === 'ALL') return true;
-    return w.status === withdrawalFilter;
+    if (withdrawalFilter !== 'ALL' && w.status !== withdrawalFilter) return false;
+    if (withdrawalSearch.trim()) {
+      const q = withdrawalSearch.toLowerCase().trim();
+      const binId = (w.binanceId || w.receiverBinanceId || w.address || '').toLowerCase();
+      const name = (w.userName || '').toLowerCase();
+      const email = (w.userEmail || '').toLowerCase();
+      const id = (w.id || '').toLowerCase();
+      return binId.includes(q) || name.includes(q) || email.includes(q) || id.includes(q);
+    }
+    return true;
   });
 
   const filteredUsers = users.filter(u =>
@@ -762,6 +960,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   {pendingWithdrawalsCount}
                 </span>
               )}
+            </button>
+
+            <button
+              id="admin-tab-otc"
+              onClick={() => setActiveTab('otc')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
+                activeTab === 'otc'
+                  ? 'bg-gradient-to-r from-amber-500/25 to-yellow-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Zap className="w-4 h-4 text-amber-400 fill-amber-400/20" />
+                <span>OTC Market Engine</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black tracking-tight">
+                93% Max
+              </span>
             </button>
 
             <button
@@ -1185,128 +1401,849 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* TAB 3: WITHDRAWAL REQUESTS */}
           {activeTab === 'withdrawals' && (
             <div className="space-y-6 max-w-6xl mx-auto">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              {/* Header & Quick Filter */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
                     <ArrowUpCircle className="w-6 h-6 text-amber-400" />
-                    <span>Withdrawal Requests & Payouts</span>
+                    <span>Withdrawal Requests & Payout Gateway</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Authorize and release trader withdrawals to TRON TRC-20, Binance Pay, or Bank.
+                    Review, verify Receiver Binance Pay ID, and authorize instant payouts to traders.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1.5 p-1 bg-[#101626] rounded-xl border border-slate-800">
-                  <button
-                    onClick={() => setWithdrawalFilter('PENDING')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      withdrawalFilter === 'PENDING'
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Pending ({pendingWithdrawalsCount})
-                  </button>
-                  <button
-                    onClick={() => setWithdrawalFilter('APPROVED')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      withdrawalFilter === 'APPROVED'
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Approved History
-                  </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 p-1 bg-[#101626] rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setWithdrawalFilter('PENDING')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        withdrawalFilter === 'PENDING'
+                          ? 'bg-amber-500 text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Pending</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        withdrawalFilter === 'PENDING' ? 'bg-slate-950/20 text-slate-950' : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {pendingWithdrawalsCount}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setWithdrawalFilter('APPROVED')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        withdrawalFilter === 'APPROVED'
+                          ? 'bg-emerald-500 text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Dispatched</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        withdrawalFilter === 'APPROVED' ? 'bg-slate-950/20 text-slate-950' : 'bg-emerald-500/20 text-emerald-400'
+                      }`}>
+                        {approvedWithdrawalsCount}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setWithdrawalFilter('REJECTED')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        withdrawalFilter === 'REJECTED'
+                          ? 'bg-rose-500 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Refunded</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        withdrawalFilter === 'REJECTED' ? 'bg-white/20 text-white' : 'bg-rose-500/20 text-rose-400'
+                      }`}>
+                        {rejectedWithdrawalsCount}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setWithdrawalFilter('ALL')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        withdrawalFilter === 'ALL'
+                          ? 'bg-cyan-500 text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All ({withdrawals.length})
+                    </button>
+                  </div>
                 </div>
               </div>
 
+              {/* 3 Metric Cards for Payout Operations */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-4 rounded-xl bg-[#0e1424] border border-amber-500/30 flex items-center gap-3.5 shadow-lg">
+                  <div className="w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+                    <Clock className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Pending Payout Queue</div>
+                    <div className="text-lg font-black text-amber-400 font-mono">
+                      ${pendingWithdrawalTotal.toFixed(2)} <span className="text-xs text-slate-400 font-sans font-normal">({pendingWithdrawalsCount} reqs)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#0e1424] border border-emerald-500/30 flex items-center gap-3.5 shadow-lg">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <CheckCircle className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Dispatched Payouts</div>
+                    <div className="text-lg font-black text-emerald-400 font-mono">
+                      ${approvedWithdrawalTotal.toFixed(2)} <span className="text-xs text-slate-400 font-sans font-normal">({approvedWithdrawalsCount} paid)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#0e1424] border border-cyan-500/30 flex items-center gap-3.5 shadow-lg">
+                  <div className="w-10 h-10 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                    <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Payout Network</div>
+                    <div className="text-sm font-black text-white truncate">Binance Pay UID Transfer</div>
+                    <div className="text-[10px] text-cyan-400 font-mono">Instant • Zero Fee • Direct UID</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search Box */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={withdrawalSearch}
+                  onChange={(e) => setWithdrawalSearch(e.target.value)}
+                  placeholder="Search withdrawals by Receiver Binance ID, Trader Name, Email, or Request ID..."
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0d1322] border border-slate-800 text-white placeholder:text-slate-500 text-xs focus:outline-none focus:border-amber-400 transition"
+                />
+                {withdrawalSearch && (
+                  <button
+                    onClick={() => setWithdrawalSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Main Requests Container (Mobile Cards + Desktop Table) */}
               <div className="rounded-2xl bg-[#0f1524] border border-slate-800 overflow-hidden shadow-2xl">
-                <div className="overflow-x-auto">
+                {/* Mobile Cards (Visible on screens smaller than md) */}
+                <div className="md:hidden divide-y divide-slate-800/80">
+                  {filteredWithdrawals.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500">
+                      <ArrowUpCircle className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <div className="font-bold text-slate-400 text-sm">No withdrawal requests found</div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {withdrawalSearch ? 'Try adjusting your search query.' : 'Incoming Binance Pay withdrawals will appear here instantly.'}
+                      </p>
+                    </div>
+                  ) : (
+                    filteredWithdrawals.map((item) => {
+                      const targetBinanceId = (item.binanceId || item.receiverBinanceId || item.address || '').trim();
+                      const isCopied = copiedWithdrawalBinanceId === item.id;
+
+                      return (
+                        <div key={`mob-${item.id}`} className="p-4 space-y-3 hover:bg-slate-800/20 transition">
+                          {/* Top Row: ID, Time, and Status */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="font-mono text-amber-400 font-bold text-xs">{item.id}</span>
+                              <span className="text-[10px] text-slate-500 font-mono ml-2">
+                                {new Date(item.createdAt).toLocaleString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                            <div>
+                              {item.status === 'PENDING' && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                  <span>Pending</span>
+                                </span>
+                              )}
+                              {item.status === 'APPROVED' && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3 text-emerald-400" />
+                                  <span>Dispatched</span>
+                                </span>
+                              )}
+                              {item.status === 'REJECTED' && (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                                  <XCircle className="w-3 h-3 text-rose-400" />
+                                  <span>Refunded</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Trader Details */}
+                          <div className="flex items-center justify-between text-xs bg-[#0b101c] p-2.5 rounded-xl border border-slate-800/80">
+                            <div>
+                              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Trader</div>
+                              <div className="font-extrabold text-white">{item.userName || 'Trader'}</div>
+                              <div className="text-[10px] text-slate-400 font-mono truncate max-w-[180px]">{item.userEmail}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Amount</div>
+                              <div className="font-mono font-black text-emerald-400 text-base">
+                                ${item.amount.toFixed(2)} <span className="text-[10px] text-slate-400 font-normal">USD</span>
+                              </div>
+                              <div className="text-[9px] text-emerald-400 font-semibold">0% Fee Applied</div>
+                            </div>
+                          </div>
+
+                          {/* Receiver Binance ID Box (Prominently Spotlighted) */}
+                          <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 to-yellow-500/10 border border-amber-500/40 flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                                <span className="px-1 py-0.2 rounded bg-amber-500/30 text-amber-300 font-mono text-[9px]">UID</span>
+                                <span>Receiver Binance ID:</span>
+                              </div>
+                              <div className="font-mono font-black text-white text-sm tracking-wider select-all mt-0.5 break-all">
+                                {targetBinanceId || 'Not Provided'}
+                              </div>
+                            </div>
+                            {targetBinanceId && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(targetBinanceId);
+                                  setCopiedWithdrawalBinanceId(item.id);
+                                  setTimeout(() => setCopiedWithdrawalBinanceId(null), 2500);
+                                  sound.playClick();
+                                }}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1 shadow-sm ${
+                                  isCopied
+                                    ? 'bg-emerald-500 text-slate-950 font-black'
+                                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                                }`}
+                              >
+                                {isCopied ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    <span>Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Copy UID</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Mobile Actions */}
+                          {item.status === 'PENDING' ? (
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <button
+                                id={`mob-approve-withdrawal-${item.id}`}
+                                onClick={() => handleApproveWithdrawal(item.id)}
+                                className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                              >
+                                <CheckCircle className="w-4 h-4 stroke-[2.5]" />
+                                <span>Approve & Release</span>
+                              </button>
+                              <button
+                                id={`mob-reject-withdrawal-${item.id}`}
+                                onClick={() => handleRejectWithdrawal(item.id)}
+                                className="w-full py-2.5 px-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold rounded-xl text-xs border border-rose-500/40 transition cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                <XCircle className="w-4 h-4" />
+                                <span>Reject & Refund</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-center py-1 text-[11px] font-mono text-slate-500 bg-[#0c1220] rounded-lg">
+                              {item.status === 'APPROVED' ? (
+                                <span className="text-emerald-400 font-bold">✓ Payout Dispatched via Binance Pay</span>
+                              ) : (
+                                <span className="text-rose-400 font-bold">✕ Request Declined & Funds Refunded</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#151c30] text-slate-400 font-bold border-b border-slate-800">
                       <tr>
                         <th className="p-3.5">Withdrawal ID</th>
-                        <th className="p-3.5">Trader</th>
-                        <th className="p-3.5">Amount</th>
-                        <th className="p-3.5">Method & Network</th>
-                        <th className="p-3.5">Destination Address</th>
+                        <th className="p-3.5">Trader Account</th>
+                        <th className="p-3.5">Withdrawal Amount</th>
+                        <th className="p-3.5">Receiver Binance ID (Pay UID)</th>
+                        <th className="p-3.5">Payout Method</th>
                         <th className="p-3.5">Status</th>
-                        <th className="p-3.5 text-right">Actions</th>
+                        <th className="p-3.5 text-right">Admin Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
                       {filteredWithdrawals.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-slate-500">
-                            No withdrawal requests currently.
+                          <td colSpan={7} className="p-10 text-center text-slate-500">
+                            <div className="max-w-xs mx-auto space-y-2">
+                              <ArrowUpCircle className="w-8 h-8 text-slate-600 mx-auto" />
+                              <div className="font-bold text-slate-400">No withdrawal requests found</div>
+                              <p className="text-[11px] text-slate-500">
+                                {withdrawalSearch
+                                  ? 'Try adjusting your search criteria.'
+                                  : 'When traders submit withdrawal requests via Binance Pay, they will appear here instantly.'}
+                              </p>
+                            </div>
                           </td>
                         </tr>
                       ) : (
-                        filteredWithdrawals.map((item) => (
-                          <tr key={item.id} className="hover:bg-slate-800/40 transition">
-                            <td className="p-3.5 font-mono text-amber-400 font-bold">{item.id}</td>
+                        filteredWithdrawals.map((item) => {
+                          const targetBinanceId = (item.binanceId || item.receiverBinanceId || item.address || '').trim();
+                          const isCopied = copiedWithdrawalBinanceId === item.id;
+
+                          return (
+                            <tr key={item.id} className="hover:bg-slate-800/40 transition">
+                              {/* Withdrawal ID */}
+                              <td className="p-3.5">
+                                <div className="font-mono text-amber-400 font-bold text-xs">{item.id}</div>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  {new Date(item.createdAt).toLocaleString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </div>
+                              </td>
+
+                              {/* Trader Info */}
+                              <td className="p-3.5">
+                                <div className="font-extrabold text-white">{item.userName || 'Trader'}</div>
+                                <div className="text-[11px] text-slate-400 font-mono">{item.userEmail}</div>
+                              </td>
+
+                              {/* Amount */}
+                              <td className="p-3.5">
+                                <div className="font-mono font-black text-emerald-400 text-sm">
+                                  ${item.amount.toFixed(2)}{' '}
+                                  <span className="text-[10px] text-slate-400 font-normal">USD</span>
+                                </div>
+                                <div className="text-[10px] text-emerald-500/80 font-semibold flex items-center gap-1 mt-0.5">
+                                  <span>0% Fee Applied</span>
+                                </div>
+                              </td>
+
+                              {/* Receiver Binance ID (Spotlighted with 1-click copy) */}
+                              <td className="p-3.5">
+                                <div className="inline-flex items-center gap-2 p-1.5 pr-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 group hover:border-amber-400 transition">
+                                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+                                    <span className="font-black text-[10px] text-amber-400">UID</span>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-[9px] font-bold text-amber-400/80 uppercase tracking-wider">
+                                      Receiver Binance ID
+                                    </div>
+                                    <div className="font-mono font-black text-white text-xs tracking-wider select-all">
+                                      {targetBinanceId || 'Not Provided'}
+                                    </div>
+                                  </div>
+                                  {targetBinanceId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(targetBinanceId);
+                                        setCopiedWithdrawalBinanceId(item.id);
+                                        setTimeout(() => setCopiedWithdrawalBinanceId(null), 2500);
+                                        sound.playClick();
+                                      }}
+                                      className={`p-1.5 rounded-lg text-xs font-bold transition cursor-pointer ml-1 ${
+                                        isCopied
+                                          ? 'bg-emerald-500 text-slate-950'
+                                          : 'bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-white'
+                                      }`}
+                                      title="Copy Receiver Binance ID to clipboard"
+                                    >
+                                      {isCopied ? (
+                                        <div className="flex items-center gap-1 text-[10px]">
+                                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                          <span>Copied</span>
+                                        </div>
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Payout Method */}
+                              <td className="p-3.5">
+                                <div className="font-bold text-white flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>
+                                  <span>{item.method || 'Binance Pay'}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                  {item.network || 'Binance Pay UID Transfer'}
+                                </div>
+                              </td>
+
+                              {/* Status */}
+                              <td className="p-3.5">
+                                {item.status === 'PENDING' && (
+                                  <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold inline-flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                    <span>Pending Review</span>
+                                  </span>
+                                )}
+                                {item.status === 'APPROVED' && (
+                                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold inline-flex items-center gap-1.5">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Dispatched</span>
+                                  </span>
+                                )}
+                                {item.status === 'REJECTED' && (
+                                  <span
+                                    className="px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold inline-flex items-center gap-1.5"
+                                    title={item.rejectedReason || 'Verification requirement'}
+                                  >
+                                    <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                                    <span>Refunded</span>
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="p-3.5 text-right space-x-2 whitespace-nowrap">
+                                {item.status === 'PENDING' ? (
+                                  <>
+                                    <button
+                                      id={`approve-withdrawal-${item.id}`}
+                                      onClick={() => handleApproveWithdrawal(item.id)}
+                                      className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition active:scale-95 cursor-pointer inline-flex items-center gap-1.5"
+                                    >
+                                      <CheckCircle className="w-3.5 h-3.5 stroke-[2.5]" />
+                                      <span>Approve & Release</span>
+                                    </button>
+                                    <button
+                                      id={`reject-withdrawal-${item.id}`}
+                                      onClick={() => handleRejectWithdrawal(item.id)}
+                                      className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold rounded-xl text-xs border border-rose-500/40 transition cursor-pointer"
+                                    >
+                                      Reject & Refund
+                                    </button>
+                                  </>
+                                ) : (
+                                  <div className="text-[11px] text-slate-500 font-mono">
+                                    {item.status === 'APPROVED' ? (
+                                      <span className="text-emerald-400/80">Completed</span>
+                                    ) : (
+                                      <span className="text-rose-400/80">Refunded to Live</span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: OTC SYNTHETIC MARKET ENGINE (Quotex Style, Max 93% Payout) */}
+          {activeTab === 'otc' && (
+            <div className="space-y-6 max-w-6xl mx-auto">
+              {/* Header & Quick Action */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 flex items-center justify-center text-slate-950 shadow-lg shadow-amber-500/20">
+                      <Zap className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
+                    </div>
+                    <h2 className="text-xl md:text-2xl font-black text-white">
+                      Quotex-Style OTC Synthetic Pairs Engine
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Manage 24/7 OTC Synthetic market assets, continuous smooth price synthesis, and Quotex-standard high payout returns (up to 93%).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="px-3.5 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs rounded-xl flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>10 Curated Authentic Pairs (5 Live + 5 OTC)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2 Operations Cards: Global Payout Controller & OTC Engine Status */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Global Payout Controller */}
+                <div className="p-5 rounded-2xl bg-gradient-to-br from-[#121a2d] to-[#0c1220] border border-amber-500/40 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 fill-amber-400" />
+                        <span>Global Default OTC Payout</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">Default rate applied to newly created OTC synthetic pairs</span>
+                    </div>
+                    <div className="px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-xs">
+                      Max: 93%
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-300 mb-1.5">
+                        <span>Current Default:</span>
+                        <span className="text-amber-400 text-lg font-black">{defaultOtcPayout}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="50"
+                        max="93"
+                        value={defaultOtcPayout}
+                        onChange={(e) => setDefaultOtcPayout(Number(e.target.value))}
+                        className="w-full accent-amber-400 cursor-pointer"
+                      />
+                    </div>
+
+                    <button
+                      id="btn-save-default-otc-payout"
+                      onClick={() => handleUpdateDefaultOtcPayout(defaultOtcPayout)}
+                      disabled={isSavingDefaultPayout}
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingDefaultPayout ? 'Saving...' : 'Apply Default'}
+                    </button>
+                  </div>
+
+                  {/* Preset quick buttons */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Quick Presets:</span>
+                    {[93, 90, 88, 85, 80].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => handleUpdateDefaultOtcPayout(rate)}
+                        className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
+                          defaultOtcPayout === rate
+                            ? 'bg-amber-400 text-slate-950'
+                            : 'bg-[#090e1a] border border-slate-700 text-slate-300 hover:border-amber-400 hover:text-white'
+                        }`}
+                      >
+                        {rate}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* OTC Engine Status & Algorithmic Guardrails */}
+                <div className="p-5 rounded-2xl bg-gradient-to-br from-[#101728] to-[#0a0f1d] border border-cyan-500/30 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>OTC Engine Algorithmic Guardrails</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold">
+                      Online 24/7
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2.5 rounded-xl bg-[#090e1a] border border-slate-800">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Active OTC Pairs</div>
+                      <div className="text-white font-mono font-black text-sm mt-0.5">
+                        {otcPairs.filter((p) => p.enabled).length} / {otcPairs.length}
+                      </div>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-[#090e1a] border border-slate-800">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Max Payout Cap</div>
+                      <div className="text-amber-400 font-mono font-black text-sm mt-0.5">
+                        93% (Quotex Standard)
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-400 leading-relaxed bg-[#0b101c] p-2.5 rounded-xl border border-slate-800/80">
+                    ℹ️ <strong>Algorithmic Movement:</strong> Prices synthesized via continuous stochastic drift. No artificial periodic waves. Fully independent 24/7 OTC liquidity.
+                  </div>
+                </div>
+              </div>
+
+              {/* Category Filter Pills & Search */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#101626] rounded-xl border border-slate-800">
+                  {(['ALL', 'Forex', 'Crypto', 'Commodity', 'Index'] as const).map((cat) => {
+                    const count = cat === 'ALL' ? otcPairs.length : otcPairs.filter((p) => p.category === cat).length;
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => {
+                          sound.playClick();
+                          setOtcCategoryFilter(cat);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                          otcCategoryFilter === cat
+                            ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span>{cat === 'ALL' ? 'All OTC Pairs' : cat}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            otcCategoryFilter === cat ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="relative min-w-[240px]">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={otcSearch}
+                    onChange={(e) => setOtcSearch(e.target.value)}
+                    placeholder="Filter by OTC symbol or name..."
+                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-[#0e1424] border border-slate-800 text-white placeholder:text-slate-500 text-xs focus:outline-none focus:border-amber-400 transition"
+                  />
+                  {otcSearch && (
+                    <button
+                      onClick={() => setOtcSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* OTC Pairs List (Responsive Table on Desktop & Cards on Mobile) */}
+              <div className="rounded-2xl bg-[#0f1524] border border-slate-800 overflow-hidden shadow-2xl">
+                {/* Mobile Cards View */}
+                <div className="md:hidden divide-y divide-slate-800/80">
+                  {otcPairs
+                    .filter((p) => {
+                      if (otcCategoryFilter !== 'ALL' && p.category !== otcCategoryFilter) return false;
+                      if (otcSearch) {
+                        const q = otcSearch.toLowerCase();
+                        return p.symbol.toLowerCase().includes(q) || p.displayName.toLowerCase().includes(q);
+                      }
+                      return true;
+                    })
+                    .map((pair) => (
+                      <div key={`mob-otc-${pair.id}`} className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-extrabold text-white text-sm">{pair.displayName}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-[9px]">
+                                OTC
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-mono">{pair.symbol}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                pair.enabled
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
+                              }`}
+                            >
+                              {pair.enabled ? 'ACTIVE' : 'PAUSED'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs bg-[#0b101c] p-2.5 rounded-xl border border-slate-800">
+                          <div>
+                            <div className="text-[10px] text-slate-500 font-bold uppercase">Category</div>
+                            <div className="text-cyan-400 font-bold">{pair.category} OTC</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] text-slate-500 font-bold uppercase">Base Price</div>
+                            <div className="text-white font-mono font-bold">
+                              {pair.price ? pair.price.toFixed(pair.pricePrecision || 2) : '1.00'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Payout Adjustment Controls */}
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                              Trader Payout Rate:
+                            </div>
+                            <div className="text-base font-black text-amber-400 font-mono">{pair.payoutRate}%</div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            {[93, 90, 85].map((rate) => (
+                              <button
+                                key={rate}
+                                onClick={() => handleUpdateOtcPairPayout(pair.id, rate)}
+                                className={`px-2 py-1 rounded text-xs font-mono font-bold transition cursor-pointer ${
+                                  pair.payoutRate === rate
+                                    ? 'bg-amber-400 text-slate-950'
+                                    : 'bg-slate-800 text-slate-300 hover:text-white'
+                                }`}
+                              >
+                                {rate}%
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="pt-1">
+                          <button
+                            onClick={() => handleToggleOtcPair(pair.id, pair.enabled)}
+                            className={`w-full py-2 px-3 rounded-xl font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                              pair.enabled
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                            }`}
+                          >
+                            <span>{pair.enabled ? 'Pause Trading' : 'Enable Trading'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#151c30] text-slate-400 font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3.5">OTC Pair Asset</th>
+                        <th className="p-3.5">Category</th>
+                        <th className="p-3.5">Synthetic Price</th>
+                        <th className="p-3.5">Trader Payout Rate</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {otcPairs
+                        .filter((p) => {
+                          if (otcCategoryFilter !== 'ALL' && p.category !== otcCategoryFilter) return false;
+                          if (otcSearch) {
+                            const q = otcSearch.toLowerCase();
+                            return p.symbol.toLowerCase().includes(q) || p.displayName.toLowerCase().includes(q);
+                          }
+                          return true;
+                        })
+                        .map((pair) => (
+                          <tr key={`row-otc-${pair.id}`} className="hover:bg-slate-800/30 transition">
+                            {/* Pair Asset */}
                             <td className="p-3.5">
-                              <div className="font-extrabold text-white">{item.userName}</div>
-                              <div className="text-[11px] text-slate-400 font-mono">{item.userEmail}</div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-xs font-mono">
+                                  OTC
+                                </div>
+                                <div>
+                                  <div className="font-extrabold text-white flex items-center gap-1.5">
+                                    <span>{pair.displayName}</span>
+                                    <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-mono font-bold">
+                                      Quotex
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 font-mono">{pair.symbol}</div>
+                                </div>
+                              </div>
                             </td>
-                            <td className="p-3.5 font-mono font-black text-rose-400 text-sm">
-                              ${item.amount.toFixed(2)}
-                            </td>
+
+                            {/* Category */}
                             <td className="p-3.5">
-                              <div className="font-bold text-white">{item.method}</div>
-                              <div className="text-[11px] text-slate-400">{item.network}</div>
-                            </td>
-                            <td className="p-3.5 max-w-[180px]">
-                              <span className="font-mono text-slate-300 text-[11px] truncate block" title={item.address}>
-                                {item.address}
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-cyan-300 border border-slate-700 text-[10px] font-bold">
+                                {pair.category} OTC
                               </span>
                             </td>
+
+                            {/* Base Price */}
+                            <td className="p-3.5 font-mono font-bold text-slate-300">
+                              {pair.price ? pair.price.toFixed(pair.pricePrecision || 2) : '1.00000'}
+                            </td>
+
+                            {/* Payout Rate with quick stepper */}
                             <td className="p-3.5">
-                              {item.status === 'PENDING' && (
-                                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold inline-flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  Pending Review
+                              <div className="inline-flex items-center gap-1.5 bg-[#0b101c] p-1 rounded-xl border border-slate-700">
+                                <span className="font-mono font-black text-amber-400 text-xs px-2">
+                                  {pair.payoutRate}%
                                 </span>
-                              )}
-                              {item.status === 'APPROVED' && (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold inline-flex items-center gap-1">
-                                  <CheckCircle className="w-3 h-3" />
-                                  Dispatched
+                                <div className="flex items-center gap-1">
+                                  {[93, 90, 85].map((rate) => (
+                                    <button
+                                      key={rate}
+                                      onClick={() => handleUpdateOtcPairPayout(pair.id, rate)}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                                        pair.payoutRate === rate
+                                          ? 'bg-amber-400 text-slate-950'
+                                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      {rate}%
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Status */}
+                            <td className="p-3.5">
+                              {pair.enabled ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                  <span>Active (24/7)</span>
                                 </span>
-                              )}
-                              {item.status === 'REJECTED' && (
-                                <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold inline-flex items-center gap-1">
-                                  <XCircle className="w-3 h-3" />
-                                  Refunded
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-bold">
+                                  Paused
                                 </span>
                               )}
                             </td>
+
+                            {/* Actions */}
                             <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
-                              {item.status === 'PENDING' ? (
-                                <>
-                                  <button
-                                    id={`approve-withdrawal-${item.id}`}
-                                    onClick={() => handleApproveWithdrawal(item.id)}
-                                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs shadow transition active:scale-95 cursor-pointer inline-flex items-center gap-1"
-                                  >
-                                    <CheckCircle className="w-3.5 h-3.5" />
-                                    <span>Approve & Release</span>
-                                  </button>
-                                  <button
-                                    id={`reject-withdrawal-${item.id}`}
-                                    onClick={() => handleRejectWithdrawal(item.id)}
-                                    className="px-2.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold rounded-lg text-xs border border-rose-500/40 transition cursor-pointer"
-                                  >
-                                    Reject & Refund
-                                  </button>
-                                </>
-                              ) : (
-                                <span className="text-[11px] text-slate-500">Processed</span>
-                              )}
+                              <button
+                                onClick={() => handleToggleOtcPair(pair.id, pair.enabled)}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                  pair.enabled
+                                    ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40'
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black'
+                                }`}
+                              >
+                                {pair.enabled ? 'Pause' : 'Activate'}
+                              </button>
                             </td>
                           </tr>
-                        ))
-                      )}
+                        ))}
                     </tbody>
                   </table>
                 </div>

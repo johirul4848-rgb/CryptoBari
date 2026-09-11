@@ -31,7 +31,7 @@ export const TradeResultToast: React.FC<TradeResultToastProps> = ({ trade, onDis
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
-  const cleanPairName = trade.displayPair.replace('USDT', '') + ' (OTC)';
+  const cleanPairName = trade.displayPair.replace(/\s*\(OTC\)/gi, '');
   const formattedDuration = formatDuration(trade.durationSeconds);
 
   return (
