@@ -10,6 +10,10 @@ import {
   ChevronUp,
   ChevronDown,
   Percent,
+  Copy,
+  Palette,
+  Box,
+  Spline,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
@@ -22,6 +26,7 @@ interface TradeMarkersOverlayProps {
   currentPrice: number;
   timeframeSeconds?: number;
   onDeleteDrawingTool?: (id: string) => void;
+  onDuplicateDrawingTool?: (id: string) => void;
   onUpdateDrawingTool?: (id: string, updates: Partial<DrawingToolItem>) => void;
 }
 
@@ -45,6 +50,17 @@ interface FibonacciRenderItem {
   goldenBottomY: number;
 }
 
+const PRESET_TOOL_COLORS = [
+  '#f59e0b', // Amber
+  '#f43f5e', // Rose
+  '#06b6d4', // Cyan
+  '#10b981', // Emerald
+  '#a855f7', // Purple
+  '#38bdf8', // Sky
+  '#eab308', // Gold
+  '#ffffff', // White
+];
+
 export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
   chart,
   series,
@@ -53,9 +69,11 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
   currentPrice,
   timeframeSeconds = 60,
   onDeleteDrawingTool,
+  onDuplicateDrawingTool,
   onUpdateDrawingTool,
 }) => {
   const [, setTick] = useState(0);
+  const [activeColorPickerId, setActiveColorPickerId] = useState<string | null>(null);
   const draggingToolRef = useRef<{ id: string; startY: number; startPrice: number } | null>(null);
 
   // Re-render periodically for running trade timers & candle countdown
@@ -65,6 +83,20 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
     }, 100);
     return () => clearInterval(interval);
   }, []);
+
+  // Immediate re-computation on chart zoom / pan / scroll
+  useEffect(() => {
+    if (!chart) return;
+    const handleRangeChange = () => setTick((t) => (t + 1) % 1000);
+    try {
+      chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    } catch {}
+    return () => {
+      try {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+      } catch {}
+    };
+  }, [chart]);
 
   // Compute live coordinates
   const computePositions = useCallback(() => {
@@ -77,6 +109,8 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
         trades: [],
         toolPositions: [],
         fibonacciTools: [],
+        zoneBoxes: [],
+        channels: [],
       };
     }
 
@@ -115,10 +149,14 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
         } catch {}
       }
 
-      // 2. Compute Drawing Tools Coordinates (Horizontal lines)
+      // 2. Compute Drawing Tools Coordinates
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolPositions: any[] = [];
       const fibonacciTools: FibonacciRenderItem[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const zoneBoxes: any[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const channels: any[] = [];
 
       for (const tool of drawingTools) {
         try {
@@ -170,7 +208,42 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
                 goldenBottomY: Math.max(lvl50.y, lvl618.y),
               });
             }
+          } else if (tool.type === 'zone_box') {
+            const p1 = tool.price;
+            const p2 = tool.price2 || Number((tool.price * 0.994).toFixed(4));
+            const y1 = series.priceToCoordinate(p1);
+            const y2 = series.priceToCoordinate(p2);
+            if (y1 !== null && y2 !== null && !isNaN(y1) && !isNaN(y2)) {
+              zoneBoxes.push({
+                id: tool.id,
+                priceTop: Math.max(p1, p2),
+                priceBtm: Math.min(p1, p2),
+                topY: Math.min(y1, y2),
+                bottomY: Math.max(y1, y2),
+                height: Math.abs(y1 - y2),
+                color: tool.color || '#10b981',
+                label: tool.label || 'S/R Zone Box',
+              });
+            }
+          } else if (tool.type === 'channel') {
+            const width = tool.channelWidth || tool.price * 0.003;
+            const midY = series.priceToCoordinate(tool.price);
+            const topY = series.priceToCoordinate(tool.price + width);
+            const btmY = series.priceToCoordinate(tool.price - width);
+            if (midY !== null && topY !== null && btmY !== null && !isNaN(midY)) {
+              channels.push({
+                id: tool.id,
+                price: tool.price,
+                width,
+                midY,
+                topY,
+                btmY,
+                color: tool.color || '#38bdf8',
+                label: tool.label || 'Parallel Channel',
+              });
+            }
           } else {
+            // Horizontal line / ray / trendline
             const y = series.priceToCoordinate(tool.price);
             if (y !== null && !isNaN(y)) {
               toolPositions.push({
@@ -179,6 +252,7 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
                 price: tool.price,
                 color: tool.color,
                 label: tool.label,
+                type: tool.type,
               });
             }
           }
@@ -210,7 +284,6 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
             startX = chart.timeScale().timeToCoordinate(tradeStartSec as any) as any;
           }
 
-          // If coordinate still not directly available from time scale (e.g. recent trade on active bar)
           if (startX === null || isNaN(startX)) {
             if (candleX !== null) {
               const barsAgo = Math.max(0, Math.floor((now - trade.createdAt) / (timeframeSeconds * 1000)));
@@ -228,15 +301,15 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
             endX = (startX as number) + Math.max(90, durationBars * 18);
           }
 
-          const totalSeconds = Math.max(1, Math.ceil(timeLeftMs / 1000));
-          const tMins = Math.floor(totalSeconds / 60);
-          const tSecs = totalSeconds % 60;
-          const countdown = `${tMins < 10 ? '0' : ''}${tMins}:${tSecs < 10 ? '0' : ''}${tSecs}`;
+          const remSeconds = Math.max(0, Math.ceil(timeLeftMs / 1000));
+          const remMins = Math.floor(remSeconds / 60);
+          const remSecs = remSeconds % 60;
+          const countdown = `${remMins}:${remSecs < 10 ? '0' : ''}${remSecs}`;
 
           tradeMarkers.push({
             id: trade.id,
-            entryPrice: trade.entryPrice,
             direction: trade.direction,
+            entryPrice: trade.entryPrice,
             investment: trade.investment,
             countdown,
             y,
@@ -254,6 +327,8 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
         trades: tradeMarkers,
         toolPositions,
         fibonacciTools,
+        zoneBoxes,
+        channels,
       };
     } catch {
       return {
@@ -264,6 +339,8 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
         trades: [],
         toolPositions: [],
         fibonacciTools: [],
+        zoneBoxes: [],
+        channels: [],
       };
     }
   }, [chart, series, currentPrice, timeframeSeconds, drawingTools, activeTrades]);
@@ -309,8 +386,17 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
     [chart, series, onUpdateDrawingTool]
   );
 
-  const { candleX, candleY, chartWidth, candleCountdown, trades, toolPositions, fibonacciTools } =
-    positions;
+  const {
+    candleX,
+    candleY,
+    chartWidth,
+    candleCountdown,
+    trades,
+    toolPositions,
+    fibonacciTools,
+    zoneBoxes,
+    channels,
+  } = positions;
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
@@ -325,18 +411,18 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
           {/* Subtle horizontal dashed guide */}
           <div className="w-full border-t border-amber-500/30 border-dashed" />
 
-          {/* Candle Countdown Badge: positioned to the side of the candle so the forming candle is 100% visible */}
+          {/* Candle Countdown Badge */}
           <div
             className="absolute -translate-y-1/2 flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-[#090e18]/95 border border-amber-500/70 shadow-[0_0_15px_rgba(245,158,11,0.35)] backdrop-blur-md transition-all"
             style={{
               left:
-                candleX !== null && candleX < chartWidth - 110
-                  ? `${candleX + 22}px`
-                  : `${Math.max(10, chartWidth - 95)}px`,
+                candleX !== null
+                  ? `${Math.min(Math.max(candleX + 24, 20), chartWidth - 110)}px`
+                  : '30px',
             }}
           >
-            <Clock className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
-            <span className="font-mono font-black text-xs tracking-wider text-amber-300">
+            <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+            <span className="font-mono font-black text-xs text-amber-300 tracking-wider">
               {candleCountdown}
             </span>
           </div>
@@ -344,38 +430,36 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 2. FIBONACCI RETRACEMENT TOOL RENDERING ("fibola retchment tools")        */}
+      {/* 2. FIBONACCI RETRACEMENT BANDS WITH DOUBLE, COLOR & CROSS (X)             */}
       {/* ========================================================================= */}
       {fibonacciTools.map((fib) => (
         <div key={fib.id} className="absolute inset-0 pointer-events-none select-none">
-          {/* Golden Pocket Fill between 50% and 61.8% */}
-          {fib.goldenBottomY > fib.goldenTopY && (
-            <div
-              className="absolute left-0 right-0 bg-amber-500/10 border-y border-amber-500/30 backdrop-blur-[1px] pointer-events-none"
-              style={{
-                top: `${fib.goldenTopY}px`,
-                height: `${fib.goldenBottomY - fib.goldenTopY}px`,
-              }}
-            />
-          )}
+          {/* Golden Pocket Shading (0.5 to 0.618) */}
+          <div
+            className="absolute left-0 right-0 bg-amber-500/15 border-y border-amber-500/40 pointer-events-none transition-all"
+            style={{
+              top: `${fib.goldenTopY}px`,
+              height: `${Math.max(4, fib.goldenBottomY - fib.goldenTopY)}px`,
+            }}
+          />
 
-          {/* Fibonacci Levels Lines & Badges */}
+          {/* Fibonacci Lines */}
           {fib.levels.map((lvl) => (
             <div
-              key={lvl.ratio}
-              className="absolute left-0 right-0 pointer-events-auto"
-              style={{ top: `${lvl.y}px`, transform: 'translateY(-50%)' }}
+              key={`${fib.id}-${lvl.ratio}`}
+              className="absolute left-0 right-0 pointer-events-none"
+              style={{ top: `${lvl.y}px` }}
             >
-              {/* Level Line */}
               <div
-                className={`w-full border-t ${
+                className={`w-full border-t transition-all ${
                   lvl.isGolden
-                    ? 'border-amber-400/80 border-solid shadow-[0_0_8px_rgba(245,158,11,0.4)]'
-                    : 'border-sky-400/50 border-dashed'
+                    ? 'border-amber-400 border-solid opacity-90 shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                    : 'border-sky-400/60 border-dashed'
                 }`}
+                style={{
+                  borderTopColor: lvl.isGolden ? '#f59e0b' : fib.color,
+                }}
               />
-
-              {/* Level Badge Tag */}
               <div
                 className={`absolute top-1/2 -translate-y-1/2 right-16 sm:right-24 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold flex items-center gap-1.5 border shadow-md ${
                   lvl.isGolden
@@ -389,13 +473,69 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
             </div>
           ))}
 
-          {/* Fibonacci Floating Control Badge (Nudge & Delete [X]) */}
+          {/* Fibonacci Floating Control Badge (Double + Color + Cross [X]) */}
           <div
             className="absolute left-4 sm:left-8 pointer-events-auto flex items-center gap-1 px-2.5 py-1 rounded-xl bg-[#0b0f19]/95 border border-sky-500/50 shadow-2xl backdrop-blur-md"
             style={{ top: `${fib.topY}px`, transform: 'translateY(-50%)' }}
           >
             <Percent className="w-3 h-3 text-sky-400" />
-            <span className="text-[10px] font-black text-sky-200">FIB RETRACE</span>
+            <span className="text-[10px] font-black text-sky-200">FIB</span>
+
+            {/* Duplicate / Double Button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                sound.playClick();
+                onDuplicateDrawingTool?.(fib.id);
+              }}
+              title="Duplicate / Double Fibonacci"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 font-extrabold text-[9px] border border-sky-500/30 cursor-pointer ml-1"
+            >
+              <Copy className="w-2.5 h-2.5" />
+              <span>Double</span>
+            </button>
+
+            {/* Color Swatch Trigger */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveColorPickerId(activeColorPickerId === fib.id ? null : fib.id);
+                }}
+                className="w-3.5 h-3.5 rounded-full ring-1 ring-white/40 cursor-pointer ml-1"
+                style={{ backgroundColor: fib.color }}
+                title="Change Color"
+              />
+
+              {activeColorPickerId === fib.id && (
+                <div className="absolute left-0 top-full mt-1.5 p-2 bg-[#121829] border border-slate-700 rounded-xl shadow-2xl z-50 flex flex-col gap-1.5">
+                  <div className="grid grid-cols-4 gap-1">
+                    {PRESET_TOOL_COLORS.map((col) => (
+                      <button
+                        key={col}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          sound.playClick();
+                          onUpdateDrawingTool?.(fib.id, { color: col });
+                          setActiveColorPickerId(null);
+                        }}
+                        className="w-4 h-4 rounded-full cursor-pointer hover:scale-110"
+                        style={{ backgroundColor: col }}
+                      />
+                    ))}
+                  </div>
+                  <label className="flex items-center justify-between text-[9px] text-slate-300 pt-1 border-t border-white/10 cursor-pointer">
+                    <span>Custom:</span>
+                    <input
+                      type="color"
+                      value={fib.color}
+                      onChange={(e) => onUpdateDrawingTool?.(fib.id, { color: e.target.value })}
+                      className="w-4 h-4 rounded bg-transparent border-0 cursor-pointer"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
 
             {/* Delete Fibonacci cross [X] */}
             <button
@@ -408,19 +548,93 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
               title="Remove Fibonacci Retracement"
               className="p-1 ml-1 rounded hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 cursor-pointer transition-colors"
             >
-              <X className="w-3 h-3" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       ))}
 
       {/* ========================================================================= */}
-      {/* 3. INTERACTIVE MANUALLY MOVABLE HORIZONTAL LINES WITH CROSS DELETE [X]     */}
+      {/* 2.5 ZONE BOXES & PARALLEL CHANNELS                                        */}
+      {/* ========================================================================= */}
+      {zoneBoxes.map((box) => (
+        <div
+          key={box.id}
+          className="absolute left-0 right-0 pointer-events-auto select-none"
+          style={{
+            top: `${box.topY}px`,
+            height: `${Math.max(10, box.height)}px`,
+          }}
+        >
+          {/* Shaded Area */}
+          <div
+            className="w-full h-full border-y-2 transition-all backdrop-blur-xs flex items-center justify-center cursor-ns-resize"
+            style={{
+              backgroundColor: `${box.color}22`,
+              borderColor: box.color,
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              handleStartDrag(box.id, box.priceTop, e.clientY);
+            }}
+            onTouchStart={(e) => {
+              handleStartDrag(box.id, box.priceTop, e.touches[0].clientY);
+            }}
+          >
+            {/* Center pill */}
+            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-[#0d1322]/95 border shadow-xl text-[10px] font-bold text-slate-200">
+              <Box className="w-3 h-3 text-emerald-400" />
+              <span>{box.label}</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicateDrawingTool?.(box.id);
+                }}
+                className="text-sky-400 hover:underline text-[9px] font-black ml-1 cursor-pointer"
+              >
+                Double
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteDrawingTool?.(box.id);
+                }}
+                className="text-slate-400 hover:text-rose-400 ml-1 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {channels.map((chan) => (
+        <div key={chan.id} className="absolute left-0 right-0 pointer-events-none select-none">
+          {/* Top Line */}
+          <div
+            className="absolute left-0 right-0 border-t-2 border-dashed pointer-events-auto"
+            style={{ top: `${chan.topY}px`, borderColor: chan.color }}
+          />
+          {/* Mid Line */}
+          <div
+            className="absolute left-0 right-0 border-t border-dotted pointer-events-auto"
+            style={{ top: `${chan.midY}px`, borderColor: chan.color }}
+          />
+          {/* Bottom Line */}
+          <div
+            className="absolute left-0 right-0 border-t-2 border-dashed pointer-events-auto"
+            style={{ top: `${chan.btmY}px`, borderColor: chan.color }}
+          />
+        </div>
+      ))}
+
+      {/* ========================================================================= */}
+      {/* 3. CLEAN INTERACTIVE HORIZONTAL / SUPPORT / RESISTANCE LINES              */}
       {/* ========================================================================= */}
       {toolPositions.map((tool) => (
         <div
           key={tool.id}
-          className="absolute left-0 right-0 pointer-events-auto select-none group"
+          className="absolute left-0 right-0 pointer-events-auto select-none group z-20"
           style={{ top: `${tool.y}px`, transform: 'translateY(-50%)' }}
         >
           {/* Draggable Line Hitbox */}
@@ -432,180 +646,105 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
             onTouchStart={(e) => {
               handleStartDrag(tool.id, tool.price, e.touches[0].clientY);
             }}
-            className="w-full h-5 -my-2.5 flex items-center cursor-ns-resize"
+            className="w-full h-6 -my-3 flex items-center cursor-ns-resize"
+            title="Click and drag to move line"
           >
             <div
-              className="w-full border-t-2 border-dashed transition-all"
+              className="w-full border-t-[2.5px] border-dashed transition-all group-hover:border-solid"
               style={{
                 borderColor: tool.color,
-                boxShadow: `0 0 10px ${tool.color}66`,
+                boxShadow: `0 0 14px ${tool.color}99, 0 0 4px ${tool.color}`,
               }}
             />
           </div>
 
-          {/* On-Chart Control Pill (Drag Handle + Price + Nudge + Cross Delete) */}
+          {/* Right-Side Glowing Price Scale Flag */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 left-4 md:left-8 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0d1322]/95 border shadow-2xl backdrop-blur-md"
-            style={{ borderColor: `${tool.color}aa` }}
+            className="absolute right-0 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded-l-md text-[10px] font-mono font-black text-slate-950 shadow-lg pointer-events-none flex items-center gap-1 z-20 transition-all select-none"
+            style={{
+              backgroundColor: tool.color,
+              boxShadow: `0 0 12px ${tool.color}99`,
+            }}
           >
-            {/* Drag Handle */}
-            <div
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleStartDrag(tool.id, tool.price, e.clientY);
-              }}
-              onTouchStart={(e) => {
-                handleStartDrag(tool.id, tool.price, e.touches[0].clientY);
-              }}
-              className="flex items-center gap-1 text-[11px] font-black cursor-ns-resize text-slate-200 active:text-amber-400"
-              title="Click and drag to move line up/down"
-            >
-              <GripVertical className="w-3.5 h-3.5 opacity-70" />
-              <span className="font-mono font-bold" style={{ color: tool.color }}>
-                ${tool.price}
-              </span>
-            </div>
-
-            {/* Quick Nudge Buttons */}
-            <div className="flex items-center gap-0.5 border-l border-white/10 pl-1.5 ml-1">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  sound.playClick();
-                  const step = tool.price * 0.0005;
-                  onUpdateDrawingTool?.(tool.id, {
-                    price: Number((tool.price + step).toFixed(4)),
-                  });
-                }}
-                title="Nudge Up"
-                className="p-0.5 hover:bg-white/10 rounded text-slate-300 hover:text-white cursor-pointer"
-              >
-                <ChevronUp className="w-3 h-3" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  sound.playClick();
-                  const step = tool.price * 0.0005;
-                  onUpdateDrawingTool?.(tool.id, {
-                    price: Number((tool.price - step).toFixed(4)),
-                  });
-                }}
-                title="Nudge Down"
-                className="p-0.5 hover:bg-white/10 rounded text-slate-300 hover:text-white cursor-pointer"
-              >
-                <ChevronDown className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Cross Function (X) to delete this horizontal line */}
-            <button
-              id={`cross-delete-${tool.id}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                sound.playClick();
-                onDeleteDrawingTool?.(tool.id);
-              }}
-              title="Delete this horizontal line"
-              className="p-0.5 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400 cursor-pointer transition-colors border-l border-white/10 pl-1 ml-0.5"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <span className="opacity-85 text-[8.5px]">
+              {tool.label?.includes('Support') ? 'SUP' : tool.label?.includes('Resistance') ? 'RES' : 'LVL'}
+            </span>
+            <span>
+              ${tool.price >= 1000 ? tool.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : tool.price}
+            </span>
           </div>
         </div>
       ))}
 
       {/* ========================================================================= */}
-      {/* 4. ACTIVE TRADE PLACEMENT MARKERS (EXACT CANDLE ENTRY + TRADE COUNTDOWN) */}
+      {/* 4. ACTIVE TRADE PLACEMENT MARKERS (EXACT CANDLE ENTRY + COUNTDOWN)       */}
       {/* ========================================================================= */}
       {trades.map((trade) => {
         const isUp = trade.direction === 'UP';
-        const badgeBg = isUp
-          ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 border-emerald-400/80 shadow-[0_4px_16px_rgba(16,185,129,0.4)]'
-          : 'bg-gradient-to-r from-rose-600 to-rose-500 border-rose-400/80 shadow-[0_4px_16px_rgba(244,63,94,0.4)]';
-        const lineColor = isUp ? '#10b981' : '#f43f5e';
-        const lineWidth = Math.max(50, trade.endX - trade.startX);
+        const strokeColor = isUp ? '#00c278' : '#f6465d';
+        const arrowBg = isUp ? 'bg-emerald-500' : 'bg-rose-500';
 
         return (
           <div
             key={trade.id}
-            className="absolute pointer-events-none select-none transition-all duration-75"
-            style={{
-              top: `${trade.y}px`,
-              left: 0,
-              right: 0,
-            }}
+            className="absolute left-0 right-0 pointer-events-none select-none transition-all duration-75"
+            style={{ top: `${trade.y}px` }}
           >
-            {/* 1. Horizontal Strike Line starting exactly at the trade entry candle */}
+            {/* SVG Connecting Ray Line */}
+            <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
+              <line
+                x1={trade.startX}
+                y1="0"
+                x2={trade.endX}
+                y2="0"
+                stroke={strokeColor}
+                strokeWidth="2.5"
+                strokeDasharray="6 3"
+              />
+              <circle
+                cx={trade.startX}
+                cy="0"
+                r="4"
+                fill={strokeColor}
+                className="animate-ping"
+              />
+            </svg>
+
+            {/* Entry Marker Badge */}
             <div
-              className="absolute h-[2px] -translate-y-1/2 rounded-full"
+              className="absolute -translate-y-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#090e18]/95 border shadow-2xl backdrop-blur-md transition-all"
               style={{
                 left: `${trade.startX}px`,
-                width: `${lineWidth}px`,
-                backgroundColor: lineColor,
-                boxShadow: `0 0 8px ${lineColor}88`,
+                borderColor: `${strokeColor}bb`,
               }}
-            />
-
-            {/* 2. Dotted continuation extending forward to right edge for clear price visual */}
-            <div
-              className="absolute h-[1px] border-b border-dashed -translate-y-1/2 opacity-40"
-              style={{
-                left: `${trade.startX + lineWidth}px`,
-                right: '40px',
-                borderColor: lineColor,
-              }}
-            />
-
-            {/* 3. Trade Entry Candle Marker Dot */}
-            <div
-              className="absolute w-3.5 h-3.5 rounded-full border-2 border-slate-950 -translate-x-1/2 -translate-y-1/2 shadow-lg flex items-center justify-center z-10"
-              style={{
-                left: `${trade.startX}px`,
-                top: '0px',
-                backgroundColor: lineColor,
-              }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-            </div>
-
-            {/* 4. Trade Details & Countdown Badge sitting beside the trade line */}
-            <div
-              className={`absolute -translate-y-full flex items-center gap-1.5 px-2.5 py-1 rounded-full text-white border backdrop-blur-md z-20 ${badgeBg}`}
-              style={{
-                left: `${trade.startX + 12}px`,
-                top: '-3px',
-              }}
-            >
-              <div className="w-4 h-4 rounded-full bg-black/25 flex items-center justify-center">
-                {isUp ? (
-                  <ArrowUp className="w-2.5 h-2.5 text-white stroke-[3]" />
-                ) : (
-                  <ArrowDown className="w-2.5 h-2.5 text-white stroke-[3]" />
-                )}
-              </div>
-
-              <span className="font-mono font-black text-xs">${trade.investment}</span>
-
-              {/* Trade Expiry Countdown Timer */}
-              <div className="flex items-center gap-1 bg-black/35 px-2 py-0.5 rounded-full font-mono font-black text-[11px] text-white">
-                <Clock className="w-2.5 h-2.5 text-amber-300" />
-                <span>{trade.countdown}</span>
-              </div>
-            </div>
-
-            {/* 5. Expiry Point Target Marker */}
-            <div
-              className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center z-10"
-              style={{ left: `${trade.endX}px`, top: '0px' }}
             >
               <div
-                className="w-3 h-3 rounded-full border-2 border-white shadow-md"
-                style={{ backgroundColor: lineColor }}
-              />
-              <span className="text-[9px] font-mono font-black text-slate-200 bg-slate-900/90 px-1 py-0.2 rounded border border-slate-700 mt-1 whitespace-nowrap shadow-xs">
-                EXP
+                className={`w-4 h-4 rounded-full ${arrowBg} flex items-center justify-center text-slate-950 font-black shadow-xs`}
+              >
+                {isUp ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+              </div>
+              <span className="font-mono font-bold text-xs text-slate-100">
+                ${trade.investment}
               </span>
+              <span
+                className="font-mono font-bold text-[10px] px-1 py-0.2 rounded bg-black/40"
+                style={{ color: strokeColor }}
+              >
+                ${trade.entryPrice}
+              </span>
+            </div>
+
+            {/* Countdown Badge */}
+            <div
+              className="absolute -translate-y-1/2 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#0b101c]/95 border shadow-xl backdrop-blur-md font-mono font-bold text-xs"
+              style={{
+                left: `${trade.endX - 25}px`,
+                borderColor: `${strokeColor}88`,
+                color: strokeColor,
+              }}
+            >
+              <Clock className="w-3 h-3 animate-spin" />
+              <span>{trade.countdown}</span>
             </div>
           </div>
         );

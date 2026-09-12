@@ -237,4 +237,149 @@ export function calculateMACD(
   };
 }
 
+/**
+ * Calculate Weighted Moving Average (WMA)
+ */
+export function calculateWMA(candles: CandleData[], period: number): IndicatorPoint[] {
+  if (!candles || candles.length < period) return [];
+  const raw: IndicatorPoint[] = [];
+  const denominator = (period * (period + 1)) / 2;
+
+  for (let i = period - 1; i < candles.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      const weight = period - j;
+      sum += candles[i - j].close * weight;
+    }
+    raw.push({
+      time: candles[i].time,
+      value: sum / denominator,
+    });
+  }
+  return sanitizeIndicatorPoints(raw);
+}
+
+/**
+ * Calculate Parabolic SAR (Stop and Reverse)
+ */
+export function calculateParabolicSAR(
+  candles: CandleData[],
+  step: number = 0.02,
+  maxStep: number = 0.2
+): IndicatorPoint[] {
+  if (!candles || candles.length < 3) return [];
+  const raw: IndicatorPoint[] = [];
+
+  let isBullish = candles[1].close > candles[0].close;
+  let ep = isBullish ? candles[1].high : candles[1].low;
+  let sar = isBullish ? candles[0].low : candles[0].high;
+  let af = step;
+
+  for (let i = 2; i < candles.length; i++) {
+    const c = candles[i];
+    const prevC = candles[i - 1];
+    let nextSar = sar + af * (ep - sar);
+
+    if (isBullish) {
+      nextSar = Math.min(nextSar, prevC.low, candles[i - 2].low);
+      if (c.low < nextSar) {
+        isBullish = false;
+        sar = ep;
+        ep = c.low;
+        af = step;
+      } else {
+        sar = nextSar;
+        if (c.high > ep) {
+          ep = c.high;
+          af = Math.min(af + step, maxStep);
+        }
+      }
+    } else {
+      nextSar = Math.max(nextSar, prevC.high, candles[i - 2].high);
+      if (c.high > nextSar) {
+        isBullish = true;
+        sar = ep;
+        ep = c.high;
+        af = step;
+      } else {
+        sar = nextSar;
+        if (c.low < ep) {
+          ep = c.low;
+          af = Math.min(af + step, maxStep);
+        }
+      }
+    }
+
+    raw.push({
+      time: c.time,
+      value: Number(sar.toFixed(4)),
+    });
+  }
+
+  return sanitizeIndicatorPoints(raw);
+}
+
+/**
+ * Calculate Stochastic Oscillator (%K and %D)
+ */
+export function calculateStochastic(
+  candles: CandleData[],
+  kPeriod: number = 14,
+  dPeriod: number = 3,
+  slowing: number = 3
+): { kLine: IndicatorPoint[]; dLine: IndicatorPoint[]; latestK: number; latestD: number } {
+  if (!candles || candles.length < kPeriod + dPeriod) {
+    return { kLine: [], dLine: [], latestK: 50, latestD: 50 };
+  }
+
+  const rawFastK: { time: any; value: number }[] = [];
+
+  for (let i = kPeriod - 1; i < candles.length; i++) {
+    let highestHigh = -Infinity;
+    let lowestLow = Infinity;
+    for (let j = 0; j < kPeriod; j++) {
+      const c = candles[i - j];
+      if (c.high > highestHigh) highestHigh = c.high;
+      if (c.low < lowestLow) lowestLow = c.low;
+    }
+    const currentClose = candles[i].close;
+    const diff = highestHigh - lowestLow;
+    const fastK = diff === 0 ? 50 : ((currentClose - lowestLow) / diff) * 100;
+    rawFastK.push({ time: candles[i].time, value: fastK });
+  }
+
+  // Smooth Fast K to get Slow %K (SMA with slowing)
+  const smoothedK: IndicatorPoint[] = [];
+  for (let i = slowing - 1; i < rawFastK.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < slowing; j++) {
+      sum += rawFastK[i - j].value;
+    }
+    smoothedK.push({ time: rawFastK[i].time, value: sum / slowing });
+  }
+
+  // Calculate %D (SMA of Slow %K with dPeriod)
+  const lineD: IndicatorPoint[] = [];
+  for (let i = dPeriod - 1; i < smoothedK.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < dPeriod; j++) {
+      sum += smoothedK[i - j].value;
+    }
+    lineD.push({ time: smoothedK[i].time, value: sum / dPeriod });
+  }
+
+  const sanitizedK = sanitizeIndicatorPoints(smoothedK);
+  const sanitizedD = sanitizeIndicatorPoints(lineD);
+
+  const latestK = sanitizedK.length > 0 ? sanitizedK[sanitizedK.length - 1].value : 50;
+  const latestD = sanitizedD.length > 0 ? sanitizedD[sanitizedD.length - 1].value : 50;
+
+  return {
+    kLine: sanitizedK,
+    dLine: sanitizedD,
+    latestK: Number(latestK.toFixed(2)),
+    latestD: Number(latestD.toFixed(2)),
+  };
+}
+
 

@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { X, Lock, Mail, User, Globe, Eye, EyeOff, ShieldCheck, CheckCircle2, Sparkles, ArrowRight } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { auth, db } from '../../lib/firebase';
+import {
+  signInWithPopup,
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+} from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -46,7 +55,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -74,33 +83,158 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
     sound.playClick();
 
-    setTimeout(() => {
+    const countryObj = COUNTRIES.find((c) => c.code === selectedCountry);
+    const countryStr = countryObj ? `${countryObj.flag} ${countryObj.name}` : 'Global Trader';
+
+    try {
+      if (mode === 'register') {
+        // Firebase Authentication: Create User
+        const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        const user = userCredential.user;
+
+        // Update display name
+        if (fullName.trim()) {
+          try {
+            await updateProfile(user, { displayName: fullName.trim() });
+          } catch (profileErr) {
+            console.warn('Could not update profile name:', profileErr);
+          }
+        }
+
+        // Create user document in Firestore
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            email: user.email,
+            displayName: fullName.trim() || user.email?.split('@')[0],
+            country: countryStr,
+            createdAt: Date.now(),
+            role: user.email === 'Johirul4848@gmail.com' ? 'ADMIN' : 'TRADER',
+            wallet: {
+              demoBalance: 10000,
+              liveBalance: 0,
+              currency: 'USD'
+            }
+          }, { merge: true });
+        } catch (dbErr) {
+          console.warn('Firestore user doc init:', dbErr);
+        }
+
+        sound.playWin();
+        onSuccess({
+          name: fullName.trim() || user.email?.split('@')[0] || 'Trader',
+          email: user.email || email.trim(),
+          country: countryStr,
+        });
+        onClose();
+      } else {
+        // Firebase Authentication: Sign in with Email/Password
+        const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+        const user = userCredential.user;
+
+        let userCountry = countryStr;
+        let displayName = user.displayName || user.email?.split('@')[0] || 'Trader';
+
+        try {
+          const userSnap = await getDoc(doc(db, 'users', user.uid));
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            if (data?.country) userCountry = data.country;
+            if (data?.displayName) displayName = data.displayName;
+          }
+        } catch (dbErr) {
+          console.warn('Firestore fetch user doc error:', dbErr);
+        }
+
+        sound.playWin();
+        onSuccess({
+          name: displayName,
+          email: user.email || email.trim(),
+          country: userCountry,
+        });
+        onClose();
+      }
+    } catch (err: any) {
+      console.error('Firebase Email Auth Error:', err);
+      sound.playLose();
+      if (err.code === 'auth/email-already-in-use') {
+        setErrorMessage('An account with this email already exists. Please switch to Sign In.');
+      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setErrorMessage('Invalid email or password. Please verify your credentials.');
+      } else if (err.code === 'auth/weak-password') {
+        setErrorMessage('Password is too weak. Please use at least 6 characters.');
+      } else if (err.code === 'auth/invalid-email') {
+        setErrorMessage('Please provide a valid email format.');
+      } else {
+        setErrorMessage(err.message || 'Authentication failed. Please check network connection.');
+      }
+    } finally {
       setIsLoading(false);
-      sound.playWin();
-      const countryObj = COUNTRIES.find((c) => c.code === selectedCountry);
-      onSuccess({
-        name: fullName.trim() || email.split('@')[0],
-        email: email.trim(),
-        country: countryObj ? `${countryObj.flag} ${countryObj.name}` : 'Global Trader',
-      });
-      onClose();
-    }, 600);
+    }
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setIsLoading(true);
+    setErrorMessage('');
     sound.playClick();
 
-    setTimeout(() => {
-      setIsLoading(false);
+    const provider = new GoogleAuthProvider();
+    // Force Google Account Chooser UI so user can select their Google account
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      const countryObj = COUNTRIES.find((c) => c.code === selectedCountry);
+      const countryStr = countryObj ? `${countryObj.flag} ${countryObj.name}` : 'Global Trader';
+
+      // Sync Firestore profile
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) {
+          await setDoc(userRef, {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName || user.email?.split('@')[0] || 'Trader',
+            photoURL: user.photoURL || null,
+            country: countryStr,
+            createdAt: Date.now(),
+            role: user.email === 'Johirul4848@gmail.com' ? 'ADMIN' : 'TRADER',
+            wallet: {
+              demoBalance: 10000,
+              liveBalance: 0,
+              currency: 'USD'
+            }
+          }, { merge: true });
+        }
+      } catch (dbErr) {
+        console.warn('Firestore Google auth sync:', dbErr);
+      }
+
       sound.playWin();
       onSuccess({
-        name: 'Google Trader',
-        email: 'trader.google@gmail.com',
-        country: '🇧🇩 Bangladesh',
+        name: user.displayName || user.email?.split('@')[0] || 'Trader',
+        email: user.email || 'google.trader@cryptobari.com',
+        country: countryStr,
       });
       onClose();
-    }, 500);
+    } catch (err: any) {
+      console.error('Google Sign-in Error:', err);
+      sound.playLose();
+      if (err.code === 'auth/popup-blocked') {
+        setErrorMessage('The Google sign-in popup was blocked by your browser or sandbox iframe. Please allow popups or use Email & Password below.');
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        setErrorMessage('Google sign-in was cancelled. Please try again.');
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        setErrorMessage('A sign-in window is already open. Please complete or close it.');
+      } else {
+        setErrorMessage(err.message || 'Failed to sign in with Google.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleQuickDemoAccess = () => {

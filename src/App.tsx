@@ -42,6 +42,9 @@ import { HomePage } from './components/home/HomePage';
 import { AuthModal } from './components/auth/AuthModal';
 import { sound } from './utils/audio';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { auth, db } from './lib/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 const initialLiveList = generateInitialLiveSymbols();
 // Default initial symbol: Top live pair (e.g. BTC/USDT or EUR/USD)
@@ -138,6 +141,49 @@ export const App: React.FC = () => {
     totalWithdrawals: 2194020.00,
     platformProfit: 194890.00,
   });
+
+  // Firebase Authentication State Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setIsAuthenticated(true);
+        localStorage.setItem('quotex_authenticated', 'true');
+        try {
+          const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          const userData = userSnap.data();
+          const isAdminUser = firebaseUser.email === 'Johirul4848@gmail.com' || userData?.role === 'ADMIN';
+
+          setProfile(prev => ({
+            ...prev,
+            id: firebaseUser.uid,
+            name: userData?.displayName || firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Trader',
+            email: firebaseUser.email || prev.email,
+            role: isAdminUser ? 'ADMIN' : (userData?.role || 'TRADER'),
+          }));
+
+          if (userData?.wallet) {
+            setWallet(prev => ({
+              ...prev,
+              demoBalance: typeof userData.wallet.demoBalance === 'number' ? userData.wallet.demoBalance : prev.demoBalance,
+              liveBalance: typeof userData.wallet.liveBalance === 'number' ? userData.wallet.liveBalance : prev.liveBalance,
+            }));
+          }
+        } catch (e) {
+          console.warn('Firebase user sync error:', e);
+          const isAdminUser = firebaseUser.email === 'Johirul4848@gmail.com';
+          setProfile(prev => ({
+            ...prev,
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Trader',
+            email: firebaseUser.email || prev.email,
+            role: isAdminUser ? 'ADMIN' : prev.role,
+          }));
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Real-time Binance + Forex live market connection status & dynamic discovery
   useEffect(() => {
@@ -410,8 +456,13 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     sound.playLose();
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn('Firebase signout error:', e);
+    }
     setIsAuthenticated(false);
     localStorage.removeItem('quotex_authenticated');
     setCurrentTab('trade');

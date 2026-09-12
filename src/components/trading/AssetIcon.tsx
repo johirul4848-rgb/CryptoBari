@@ -45,11 +45,11 @@ export const AssetIcon: React.FC<AssetIconProps> = ({ symbol, size = 'md', showF
         {letter}
       </div>
 
-      {/* Flag Circle Badge (US Flag for OTC / USD pairs like Quotex) */}
+      {/* Flag Circle Badge (USD/USDT Live Crypto pairs like Quotex) */}
       {showFlag && (
         <div
           className={`-ml-1.5 ${flagDim} rounded-full overflow-hidden border border-slate-900 shadow-sm shrink-0 flex flex-col justify-between`}
-          title="OTC Asset"
+          title="Live Crypto"
         >
           <div className="h-[34%] bg-red-600 w-full flex items-center">
             <div className="h-full w-[45%] bg-blue-800" />

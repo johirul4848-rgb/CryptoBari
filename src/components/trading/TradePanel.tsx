@@ -152,10 +152,11 @@ export const TradePanel: React.FC<TradePanelProps> = ({
           </div>
         </div>
 
-        {/* Payout % */}
-        <span className="text-base font-extrabold text-slate-300">
-          {payoutRate}%
-        </span>
+        {/* Payout % in prominent Eye-Catching RED */}
+        <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/15 border border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.25)]">
+          <span className="text-[10px] text-red-300/80 font-bold uppercase tracking-wider">Return</span>
+          <span className="text-base font-black text-red-500 font-mono">+{payoutRate}%</span>
+        </div>
       </div>
 
       {/* 2. TIME & INVESTMENT FORM CONTAINER */}
@@ -324,16 +325,16 @@ export const TradePanel: React.FC<TradePanelProps> = ({
         <div className="flex items-center justify-between text-xs text-slate-400 pt-0.5">
           <span className="font-semibold text-slate-400 shrink-0">Payout</span>
           <div className="flex-1 mx-2 border-b border-dotted border-slate-700/80" />
-          <span className="font-mono font-black text-sm text-slate-100 shrink-0">
+          <span className="font-mono font-black text-sm text-red-400 shrink-0">
             {potentialReturn.toFixed(2)} $
           </span>
         </div>
 
-        {/* QUOTEX UP & DOWN BUTTONS */}
+        {/* HIGH PERFORMANCE UP & DOWN BUTTONS */}
         <div className="grid grid-cols-1 gap-2 pt-1">
-          {/* UP Button (Quotex Emerald Green) */}
+          {/* UP Button (Emerald Green) */}
           <button
-            id="quotex-up-btn"
+            id="trade-up-btn"
             disabled={isPlacingTrade || availableBalance < investment}
             onClick={() => handleExecuteTrade('UP')}
             className="group relative flex items-center justify-between px-4 py-3 bg-[#00c278] hover:bg-[#00d885] disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold rounded-lg shadow-[0_4px_14px_rgba(0,194,120,0.3)] transition-all cursor-pointer active:scale-[0.98]"
@@ -344,9 +345,9 @@ export const TradePanel: React.FC<TradePanelProps> = ({
             </div>
           </button>
 
-          {/* DOWN Button (Quotex Vibrant Red) */}
+          {/* DOWN Button (Vibrant Red) */}
           <button
-            id="quotex-down-btn"
+            id="trade-down-btn"
             disabled={isPlacingTrade || availableBalance < investment}
             onClick={() => handleExecuteTrade('DOWN')}
             className="group relative flex items-center justify-between px-4 py-3 bg-[#f6465d] hover:bg-[#ff526a] disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold rounded-lg shadow-[0_4px_14px_rgba(246,70,93,0.3)] transition-all cursor-pointer active:scale-[0.98]"

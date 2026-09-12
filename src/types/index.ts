@@ -162,21 +162,32 @@ export interface AdminStats {
 
 export interface DrawingToolItem {
   id: string;
-  type: 'horizontal_line' | 'trend_line' | 'fibonacci';
+  type: 'horizontal_line' | 'trend_line' | 'ray' | 'vertical_line' | 'fibonacci' | 'channel' | 'zone_box';
   price: number;
   color: string;
   label?: string;
   lineWidth?: number;
+  lineStyle?: 'solid' | 'dashed' | 'dotted';
   highPrice?: number;
   lowPrice?: number;
+  price2?: number;          // Secondary price for trendline / channel / zone box
+  channelWidth?: number;    // Width for parallel channel
+  time?: number;            // Timestamp for vertical line / anchor 1
+  time2?: number;           // Timestamp for anchor 2
+  isLocked?: boolean;       // Lock against accidental dragging
+  isVisible?: boolean;      // Toggle visibility
 }
 
 export interface IndicatorSettings {
-  sma: { enabled: boolean; period: number; color: string };
-  ema: { enabled: boolean; period: number; color: string };
-  bollinger: { enabled: boolean; period: number; stdDev: number; color: string };
-  rsi: { enabled: boolean; period: number; overbought: number; oversold: number };
-  macd: { enabled: boolean; fast: number; slow: number; signal: number };
+  sma: { enabled: boolean; period: number; color: string; lineWidth?: number };
+  ema: { enabled: boolean; period: number; color: string; lineWidth?: number };
+  wma?: { enabled: boolean; period: number; color: string; lineWidth?: number };
+  bollinger: { enabled: boolean; period: number; stdDev: number; color: string; fillOpacity?: number };
+  rsi: { enabled: boolean; period: number; overbought: number; oversold: number; color?: string };
+  macd: { enabled: boolean; fast: number; slow: number; signal: number; color?: string };
+  stochastic?: { enabled: boolean; kPeriod: number; dPeriod: number; slowing: number; overbought: number; oversold: number };
+  parabolicSar?: { enabled: boolean; step: number; max: number; color: string };
+  supertrend?: { enabled: boolean; period: number; multiplier: number; color?: string };
 }
 
 export type NavTab = 'trade' | 'markets' | 'history' | 'wallet' | 'support' | 'admin' | 'landing' | 'deposit' | 'withdrawal' | 'profile';

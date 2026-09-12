@@ -42,7 +42,17 @@ import {
 import { TradeMarkersOverlay } from './TradeMarkersOverlay';
 import { IndicatorsAndToolsMenu } from './IndicatorsAndToolsMenu';
 import { UtcTimeSelector } from './UtcTimeSelector';
-import { calculateSMA, calculateEMA, calculateBollingerBands, calculateRSI, calculateMACD } from '../../utils/indicators';
+import { ActiveToolsFloatingBar } from './ActiveToolsFloatingBar';
+import {
+  calculateSMA,
+  calculateEMA,
+  calculateWMA,
+  calculateBollingerBands,
+  calculateRSI,
+  calculateMACD,
+  calculateParabolicSAR,
+  calculateStochastic,
+} from '../../utils/indicators';
 
 interface ChartContainerProps {
   symbol: MarketSymbol;
@@ -99,6 +109,10 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   const bbMiddleSeriesRef = useRef<ISeriesApi<any> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bbLowerSeriesRef = useRef<ISeriesApi<any> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wmaSeriesRef = useRef<ISeriesApi<any> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sarSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const candlesHistoryRef = useRef<CandleData[]>([]);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -118,8 +132,15 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     bollinger: { enabled: false, period: 20, stdDev: 2.0, color: '#a855f7' },
     rsi: { enabled: false, period: 14, overbought: 70, oversold: 30 },
     macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
+    wma: { enabled: false, period: 14, color: '#10b981' },
+    stochastic: { enabled: false, kPeriod: 14, dPeriod: 3, slowing: 3, overbought: 80, oversold: 20 },
+    parabolicSar: { enabled: false, step: 0.02, max: 0.2, color: '#f43f5e' },
   });
   const [currentRsiValue, setCurrentRsiValue] = useState<number | null>(null);
+  const [currentStochasticValue, setCurrentStochasticValue] = useState<{
+    k: number;
+    d: number;
+  } | null>(null);
   const [currentMacdValue, setCurrentMacdValue] = useState<{
     macdLine: number;
     signalLine: number;
@@ -246,6 +267,34 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   const handleDeleteDrawingTool = useCallback((id: string) => {
     sound.playClick();
     setDrawingTools((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Duplicate / Double Tool handler ("mane double")
+  const handleDuplicateDrawingTool = useCallback((id: string) => {
+    sound.playClick();
+    setDrawingTools((prev) => {
+      const toolToCopy = prev.find((t) => t.id === id);
+      if (!toolToCopy) return prev;
+      const ref = toolToCopy.price || 1;
+      const offset = ref * 0.0012; // 0.12% offset so both lines are clearly visible on the chart
+      const formatP = (p: number) => {
+        if (ref >= 1000) return Number(p.toFixed(2));
+        if (ref >= 1) return Number(p.toFixed(4));
+        if (ref >= 0.01) return Number(p.toFixed(6));
+        return Number(p.toFixed(8));
+      };
+
+      const duplicatedTool: DrawingToolItem = {
+        ...toolToCopy,
+        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        price: formatP(toolToCopy.price + offset),
+        price2: toolToCopy.price2 ? formatP(toolToCopy.price2 + offset) : undefined,
+        highPrice: toolToCopy.highPrice ? formatP(toolToCopy.highPrice + offset) : undefined,
+        lowPrice: toolToCopy.lowPrice ? formatP(toolToCopy.lowPrice + offset) : undefined,
+        label: toolToCopy.label || 'Tool Line',
+      };
+      return [...prev, duplicatedTool];
+    });
   }, []);
 
   const handleClearAllDrawingTools = useCallback(() => {
@@ -425,6 +474,105 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
       }
     } catch (err) {
       console.warn('MACD calculation handled:', err);
+    }
+
+    try {
+      // 6. WMA (Weighted Moving Average)
+      if (currentInd.wma?.enabled && chartRef.current) {
+        if (!wmaSeriesRef.current) {
+          try {
+            wmaSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.wma.color || '#10b981',
+              lineWidth: 2,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+          } catch (e) {
+            console.warn('Failed to add WMA series:', e);
+          }
+        }
+        const wmaData = calculateWMA(candles, currentInd.wma.period || 14);
+        if (wmaSeriesRef.current && wmaData.length > 0) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            wmaSeriesRef.current.setData(wmaData as any);
+          } catch (e) {
+            console.warn('WMA setData error:', e);
+          }
+        }
+      } else if (wmaSeriesRef.current && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(wmaSeriesRef.current);
+        } catch (e) {
+          console.warn('WMA remove error:', e);
+        }
+        wmaSeriesRef.current = null;
+      }
+    } catch (err) {
+      console.warn('WMA indicator update handled:', err);
+    }
+
+    try {
+      // 7. Parabolic SAR
+      if (currentInd.parabolicSar?.enabled && chartRef.current) {
+        if (!sarSeriesRef.current) {
+          try {
+            sarSeriesRef.current = chartRef.current.addSeries(LineSeries, {
+              color: currentInd.parabolicSar.color || '#f43f5e',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dotted,
+              priceLineVisible: false,
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+            });
+          } catch (e) {
+            console.warn('Failed to add SAR series:', e);
+          }
+        }
+        const sarData = calculateParabolicSAR(
+          candles,
+          currentInd.parabolicSar.step || 0.02,
+          currentInd.parabolicSar.max || 0.2
+        );
+        if (sarSeriesRef.current && sarData.length > 0) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            sarSeriesRef.current.setData(sarData as any);
+          } catch (e) {
+            console.warn('SAR setData error:', e);
+          }
+        }
+      } else if (sarSeriesRef.current && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(sarSeriesRef.current);
+        } catch (e) {
+          console.warn('SAR remove error:', e);
+        }
+        sarSeriesRef.current = null;
+      }
+    } catch (err) {
+      console.warn('SAR indicator update handled:', err);
+    }
+
+    try {
+      // 8. Stochastic Oscillator
+      if (currentInd.stochastic?.enabled) {
+        const stochResult = calculateStochastic(
+          candles,
+          currentInd.stochastic.kPeriod || 14,
+          currentInd.stochastic.dPeriod || 3,
+          currentInd.stochastic.slowing || 3
+        );
+        setCurrentStochasticValue({
+          k: stochResult.latestK,
+          d: stochResult.latestD,
+        });
+      } else {
+        setCurrentStochasticValue(null);
+      }
+    } catch (err) {
+      console.warn('Stochastic calculation handled:', err);
     }
   }, []);
 
@@ -797,7 +945,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   return (
     <div className="relative w-full h-full flex flex-col bg-[#0b0f17] overflow-hidden select-none border border-slate-800/60 rounded-lg shadow-2xl">
       {/* 1. TIMEFRAMES & CHART TOOLS BAR */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 bg-[#0d121c]/90 z-10 flex-wrap gap-2">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 bg-[#0d121c]/90 z-40 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Single Timeframe Dropdown Selector with Scroll Functionality */}
           <div className="relative">
@@ -897,6 +1045,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
             drawingTools={drawingTools}
             onAddDrawingTool={handleAddDrawingTool}
             onUpdateDrawingTool={handleUpdateDrawingTool}
+            onDuplicateDrawingTool={handleDuplicateDrawingTool}
             onDeleteDrawingTool={handleDeleteDrawingTool}
             onClearAllDrawingTools={handleClearAllDrawingTools}
             indicators={indicators}
@@ -1132,6 +1281,22 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
 
       {/* 2. MAIN CANVAS CONTAINER */}
       <div className="relative flex-1 w-full h-full min-h-[320px]">
+        {/* Quotex-Style Persistent Active Tools Floating Bar */}
+        <ActiveToolsFloatingBar
+          drawingTools={drawingTools}
+          indicators={indicators}
+          onUpdateDrawingTool={handleUpdateDrawingTool}
+          onDuplicateDrawingTool={handleDuplicateDrawingTool}
+          onDeleteDrawingTool={handleDeleteDrawingTool}
+          onClearAllDrawingTools={handleClearAllDrawingTools}
+          onUpdateIndicators={(updates) =>
+            setIndicators((prev) => ({
+              ...prev,
+              ...updates,
+            }))
+          }
+        />
+
         {/* Quotex Active Trade Markers, Running Candle Timer, and Draggable Horizontal Lines Overlay */}
         <TradeMarkersOverlay
           chart={chartRef.current}
@@ -1157,8 +1322,18 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           currentPrice={livePrice}
           drawingTools={drawingTools}
           onUpdateDrawingTool={handleUpdateDrawingTool}
+          onDuplicateDrawingTool={handleDuplicateDrawingTool}
           onDeleteDrawingTool={handleDeleteDrawingTool}
         />
+
+        {/* Floating Live Stochastic Oscillator Badge when enabled */}
+        {currentStochasticValue !== null && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3 py-1 rounded-lg bg-[#0a0f1d]/90 border border-amber-500/50 font-mono text-[11px] shadow-xl backdrop-blur-md">
+            <span className="text-amber-400 font-bold">Stochastic ({indicators.stochastic?.kPeriod},{indicators.stochastic?.dPeriod}):</span>
+            <span className="text-emerald-400 font-bold">%K: {currentStochasticValue.k}</span>
+            <span className="text-sky-400 font-bold">%D: {currentStochasticValue.d}</span>
+          </div>
+        )}
 
         {/* Floating Live RSI Indicator Badge when enabled */}
         {currentRsiValue !== null && (

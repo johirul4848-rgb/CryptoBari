@@ -162,8 +162,8 @@ export const AssetBar: React.FC<AssetBarProps> = ({
                   {tab.displayPair.replace('USDT', '')}
                 </span>
 
-                <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px] leading-none">
-                  {tab.payoutRate}%
+                <span className="px-1.5 py-0.2 rounded bg-red-500/15 text-red-400 border border-red-500/30 font-black text-[10px] leading-none">
+                  +{tab.payoutRate}%
                 </span>
 
                 {/* Close tab button */}
@@ -295,8 +295,8 @@ export const AssetBar: React.FC<AssetBarProps> = ({
                         >
                           {isUp ? `+${s.priceChangePercent.toFixed(1)}%` : `${s.priceChangePercent.toFixed(1)}%`}
                         </span>
-                        <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 font-black text-xs font-mono border border-emerald-500/30">
-                          {s.payoutRate}%
+                        <span className="px-2 py-0.5 rounded-lg bg-red-500/15 text-red-400 font-black text-xs font-mono border border-red-500/40 shadow-[0_0_8px_rgba(239,68,68,0.25)]">
+                          +{s.payoutRate}%
                         </span>
                       </div>
                     </div>

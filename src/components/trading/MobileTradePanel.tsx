@@ -203,7 +203,7 @@ export const MobileTradePanel: React.FC<MobileTradePanelProps> = ({
           </div>
 
           <div className="text-[8px] font-semibold text-slate-400 mt-1 text-center">
-            Return: <strong className="text-amber-400 font-mono">${potentialReturn.toFixed(2)}</strong>
+            Return: <strong className="text-red-400 font-mono font-bold">${potentialReturn.toFixed(2)}</strong>
           </div>
         </div>
       </div>
@@ -211,10 +211,10 @@ export const MobileTradePanel: React.FC<MobileTradePanelProps> = ({
       {/* Payout & Info Bar */}
       <div className="flex items-center justify-between text-[11px] px-1 mb-2 text-slate-300">
         <span className="text-slate-400 font-semibold">
-          Profit: <span className="text-emerald-400 font-bold">+{payoutRate}%</span>
+          Return: <span className="text-red-400 font-black px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/30 shadow-xs">+{payoutRate}%</span>
         </span>
         <span className="text-slate-300 font-semibold">
-          Your Payout: <span className="font-mono font-black text-amber-400">+${potentialProfit.toFixed(2)}</span>
+          Your Payout: <span className="font-mono font-black text-red-400">+${potentialProfit.toFixed(2)}</span>
         </span>
       </div>
 

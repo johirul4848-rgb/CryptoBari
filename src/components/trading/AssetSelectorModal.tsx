@@ -237,7 +237,7 @@ export const AssetSelectorModal: React.FC<AssetSelectorModalProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                        <span className="text-emerald-400 font-semibold">{sym.payoutRate}% Return</span>
+                        <span className="text-red-400 font-extrabold">+{sym.payoutRate}% Return</span>
                         <span>•</span>
                         <span>{sym.quoteVolume24h ? `Vol: $${(sym.quoteVolume24h / 1000000).toFixed(1)}M 24h` : 'Binance Spot Live Feed'}</span>
                       </div>
@@ -246,8 +246,8 @@ export const AssetSelectorModal: React.FC<AssetSelectorModalProps> = ({
 
                   {/* Right: Payout + Change + Price */}
                   <div className="flex items-center gap-2 sm:gap-6 text-right shrink-0">
-                    <div className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 font-black text-xs font-mono border border-emerald-500/30">
-                      {sym.payoutRate}%
+                    <div className="px-2.5 py-0.5 rounded-lg bg-red-500/15 text-red-400 font-black text-xs font-mono border border-red-500/40 shadow-[0_0_8px_rgba(239,68,68,0.25)]">
+                      +{sym.payoutRate}%
                     </div>
 
                     <div className={`hidden sm:flex items-center gap-0.5 text-xs font-semibold ${isUp ? 'text-emerald-400' : 'text-rose-400'}`}>

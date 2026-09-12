@@ -1878,11 +1878,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <Zap className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
                     </div>
                     <h2 className="text-xl md:text-2xl font-black text-white">
-                      Quotex-Style OTC Synthetic Pairs Engine
+                      CryptoBari OTC Synthetic Pairs Engine
                     </h2>
                   </div>
                   <p className="text-xs text-slate-400 mt-1">
-                    Manage 24/7 OTC Synthetic market assets, continuous smooth price synthesis, and Quotex-standard high payout returns (up to 93%).
+                    Manage 24/7 OTC Synthetic market assets, continuous smooth price synthesis, and professional high payout returns (up to 93%).
                   </p>
                 </div>
 
@@ -1979,7 +1979,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="p-2.5 rounded-xl bg-[#090e1a] border border-slate-800">
                       <div className="text-[10px] text-slate-500 font-bold uppercase">Max Payout Cap</div>
                       <div className="text-amber-400 font-mono font-black text-sm mt-0.5">
-                        93% (Quotex Standard)
+                        93% (High Yield Standard)
                       </div>
                     </div>
                   </div>
@@ -2171,7 +2171,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   <div className="font-extrabold text-white flex items-center gap-1.5">
                                     <span>{pair.displayName}</span>
                                     <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-mono font-bold">
-                                      Quotex
+                                      OTC 24/7
                                     </span>
                                   </div>
                                   <div className="text-[11px] text-slate-500 font-mono">{pair.symbol}</div>
