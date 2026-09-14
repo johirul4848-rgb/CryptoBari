@@ -27,6 +27,16 @@ export const NoticesModal: React.FC<NoticesModalProps> = ({ isOpen, onClose }) =
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    const handleUpdated = () => {
+      loadNotices();
+    };
+    window.addEventListener('cb_notices_updated', handleUpdated);
+    return () => {
+      window.removeEventListener('cb_notices_updated', handleUpdated);
+    };
+  }, []);
+
   const loadNotices = async () => {
     setIsLoading(true);
     try {

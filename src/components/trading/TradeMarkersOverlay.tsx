@@ -363,8 +363,15 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
 
           const newPrice = series.coordinateToPrice(localY);
           if (newPrice !== null && !isNaN(newPrice) && newPrice > 0) {
+            const ref = draggingToolRef.current.startPrice || currentPrice || 1;
+            let formattedPrice = Number(newPrice.toFixed(4));
+            if (ref >= 1000) formattedPrice = Number(newPrice.toFixed(2));
+            else if (ref >= 1) formattedPrice = Number(newPrice.toFixed(4));
+            else if (ref >= 0.01) formattedPrice = Number(newPrice.toFixed(6));
+            else formattedPrice = Number(newPrice.toFixed(8));
+
             onUpdateDrawingTool?.(draggingToolRef.current.id, {
-              price: Number(newPrice.toFixed(4)),
+              price: formattedPrice,
             });
           }
         } catch {}
@@ -580,31 +587,7 @@ export const TradeMarkersOverlay: React.FC<TradeMarkersOverlayProps> = ({
             onTouchStart={(e) => {
               handleStartDrag(box.id, box.priceTop, e.touches[0].clientY);
             }}
-          >
-            {/* Center pill */}
-            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-[#0d1322]/95 border shadow-xl text-[10px] font-bold text-slate-200">
-              <Box className="w-3 h-3 text-emerald-400" />
-              <span>{box.label}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDuplicateDrawingTool?.(box.id);
-                }}
-                className="text-sky-400 hover:underline text-[9px] font-black ml-1 cursor-pointer"
-              >
-                Double
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteDrawingTool?.(box.id);
-                }}
-                className="text-slate-400 hover:text-rose-400 ml-1 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
+          />
         </div>
       ))}
 

@@ -49,14 +49,20 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
 
   useEffect(() => {
     // Fetch past withdrawals
-    fetch('/api/admin/withdrawals')
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setPastWithdrawals(data.slice(0, 6));
-        }
-      })
-      .catch(() => {});
+    const fetchWithdrawals = () => {
+      fetch('/api/admin/withdrawals')
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setPastWithdrawals(data.slice(0, 8));
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchWithdrawals();
+    window.addEventListener('cb_withdrawals_updated', fetchWithdrawals);
+    return () => window.removeEventListener('cb_withdrawals_updated', fetchWithdrawals);
   }, []);
 
   const handleSetPercent = (pct: number) => {
@@ -502,23 +508,27 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
               </div>
             </div>
 
-            {/* Past Withdrawal History */}
-            {pastWithdrawals.length > 0 && (
-              <div className="p-5 rounded-3xl bg-[#0e1320] border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Recent Payout History
-                  </div>
-                  <span className="text-[10px] text-slate-500">Live Status</span>
+            {/* Recent Withdrawals History */}
+            <div className="p-5 rounded-3xl bg-[#0e1320] border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Recent Payouts History
                 </div>
+                <span className="text-[10px] text-slate-500 font-mono">Treasury Live Sync</span>
+              </div>
 
+              {pastWithdrawals.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-500">
+                  No withdrawal history recorded yet. Your requested payouts will appear here in real time.
+                </div>
+              ) : (
                 <div className="divide-y divide-slate-800">
                   {pastWithdrawals.map((wth) => (
                     <div key={wth.id} className="py-2.5 flex items-center justify-between text-xs">
                       <div>
                         <div className="font-bold text-white font-mono">{wth.id}</div>
                         <div className="text-[10px] text-slate-400">
-                          To ID: {wth.address} • {new Date(wth.createdAt || Date.now()).toLocaleTimeString()}
+                          To ID: {wth.address || wth.binanceId} • {new Date(wth.createdAt || Date.now()).toLocaleTimeString()}
                         </div>
                       </div>
 
@@ -539,8 +549,8 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 

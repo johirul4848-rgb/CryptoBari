@@ -109,11 +109,11 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
     let color = '#f59e0b'; // Amber
 
     if (type === 'support') {
-      price = currentPrice * 0.9992;
+      price = currentPrice * 0.9975;
       label = 'Support Line';
       color = '#10b981'; // Emerald
     } else if (type === 'resistance') {
-      price = currentPrice * 1.0008;
+      price = currentPrice * 1.0025;
       label = 'Resistance Line';
       color = '#f43f5e'; // Rose
     }
@@ -278,17 +278,17 @@ export const IndicatorsAndToolsMenu: React.FC<IndicatorsAndToolsMenuProps> = ({
         />
       </button>
 
-      {/* Backdrop for Mobile Outside Dismiss */}
+      {/* Backdrop for Outside Dismiss on both Mobile & Web */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm sm:hidden"
+          className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
         />
       )}
 
-      {/* Modern Responsive Panel (Docked bottom sheet on mobile, anchored dropdown below button on web) */}
+      {/* Modern Responsive Panel (Anchored high-elevation floating panel that never clips or falls under chart) */}
       {isOpen && (
-        <div className="fixed inset-x-2 bottom-3 sm:inset-auto sm:absolute sm:top-full sm:left-0 sm:mt-2 w-auto sm:w-[480px] max-h-[82vh] sm:max-h-[560px] overflow-y-auto custom-scrollbar bg-[#0c1220]/98 backdrop-blur-2xl border border-slate-700/80 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.95)] p-3.5 sm:p-4 z-50 animate-in fade-in duration-150 select-none">
+        <div className="fixed inset-x-2 bottom-3 sm:inset-auto sm:fixed sm:top-14 sm:left-14 w-auto sm:w-[480px] max-h-[85vh] sm:max-h-[580px] overflow-y-auto custom-scrollbar bg-[#0c1220]/98 backdrop-blur-2xl border border-slate-700/80 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.95)] p-3.5 sm:p-4 z-[100] animate-in fade-in duration-150 select-none">
           {/* Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-white/10 mb-3">
             <div className="flex items-center gap-2">

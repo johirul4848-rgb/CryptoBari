@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
@@ -26,9 +27,45 @@ export interface DepositRequestRecord {
   method: string;
   txHash: string;
   binanceId?: string;
+  promoCode?: string;
+  bonusPercent?: number;
+  bonusAmount?: number;
+  totalCredited?: number;
+  influencerId?: string;
+  influencerCommission?: number;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: number;
   approvedAt?: number;
+  rejectedReason?: string;
+}
+
+export interface InfluencerRecord {
+  id: string;
+  userId: string;
+  password: string;
+  promoCode: string;
+  name: string;
+  email: string;
+  country: string;
+  binanceId: string;
+  availableBalance: number;
+  totalEarned: number;
+  totalWithdrawn: number;
+  totalVolumeGenerated: number;
+  referralCount: number;
+  createdAt: number;
+}
+
+export interface InfluencerWithdrawalRecord {
+  id: string;
+  influencerId: string;
+  influencerName: string;
+  userId: string;
+  binanceId: string;
+  amount: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: number;
+  processedAt?: number;
   rejectedReason?: string;
 }
 
@@ -68,6 +105,7 @@ export interface BrokerUserRecord {
   role: 'USER' | 'VIP' | 'ADMIN';
   kycStatus: 'UNVERIFIED' | 'PENDING' | 'VERIFIED';
   liveBalance: number;
+  bonusBalance?: number;
   demoBalance: number;
   status: 'ACTIVE' | 'FROZEN';
   totalDeposited: number;
@@ -164,6 +202,7 @@ async function startServer() {
   const walletState = {
     demoBalance: 10000.00,
     liveBalance: 0.00,
+    bonusBalance: 0.00,
     lockedBalance: 0.00,
     currency: 'USD',
   };
@@ -174,79 +213,58 @@ async function startServer() {
   let cachedSymbols: ServerMarketSymbol[] = [];
   let lastSymbolsFetchTime = 0;
 
-  // Broker Admin Collections
-  const depositRequests: DepositRequestRecord[] = [
-    {
-      id: 'DEP-849201',
-      userId: 'usr_johirul',
-      userName: 'Johirul Islam',
-      userEmail: 'johirul4848@gmail.com',
-      amount: 150.00,
-      currency: 'USD',
-      method: 'Binance Pay (USDT)',
-      txHash: '0x94f83d7120a4b92c81e592df894021bb8a4d7023c',
-      binanceId: '849201948',
-      status: 'PENDING',
-      createdAt: Date.now() - 1000 * 60 * 12,
-    },
-    {
-      id: 'DEP-849195',
-      userId: 'usr_tariq',
-      userName: 'Tariq Al-Mansoor',
-      userEmail: 'tariq.mansoor@binance-vip.org',
-      amount: 500.00,
-      currency: 'USD',
-      method: 'USDT (TRC-20)',
-      txHash: 'TK9aLz8401nm29a9b0c031aa23dce0912384a',
-      binanceId: '719302481',
-      status: 'PENDING',
-      createdAt: Date.now() - 1000 * 60 * 35,
-    },
-    {
-      id: 'DEP-849180',
-      userId: 'usr_elena',
-      userName: 'Elena Rostova',
-      userEmail: 'elena.rostova@broker.fi',
-      amount: 250.00,
-      currency: 'USD',
-      method: 'Binance Pay (USDT)',
-      txHash: '0x49ca21980beadfc8812903120cbac49821849',
-      binanceId: '520194832',
-      status: 'APPROVED',
-      createdAt: Date.now() - 1000 * 60 * 120,
-      approvedAt: Date.now() - 1000 * 60 * 115,
+  // Broker Admin Collections - Clean initial state (starts from 0)
+  const DATA_DIR = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(DATA_DIR)) {
+    try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
+  }
+
+  function loadJsonFile<T>(filename: string, fallback: T): T {
+    try {
+      const p = path.join(DATA_DIR, filename);
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, 'utf-8');
+        return JSON.parse(content);
+      }
+    } catch (err) {
+      console.warn(`Could not load ${filename}:`, err);
     }
+    return fallback;
+  }
+
+  function saveJsonFile(filename: string, data: any) {
+    try {
+      const p = path.join(DATA_DIR, filename);
+      fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn(`Could not save ${filename}:`, err);
+    }
+  }
+
+  const depositRequests: DepositRequestRecord[] = loadJsonFile('deposits.json', []);
+  const withdrawalRequests: WithdrawalRequestRecord[] = loadJsonFile('withdrawals.json', []);
+
+  const initialInfluencers: InfluencerRecord[] = [
+    {
+      id: 'INF-2048',
+      userId: 'INF-2048',
+      password: 'VIP7782',
+      promoCode: 'WIN99',
+      name: 'Tanvir Hossain',
+      email: 'tanvir.crypto@gmail.com',
+      country: 'Bangladesh',
+      binanceId: '794380283',
+      availableBalance: 40.00,
+      totalEarned: 40.00,
+      totalWithdrawn: 0.00,
+      totalVolumeGenerated: 200.00,
+      referralCount: 2,
+      createdAt: Date.now() - 86400000 * 5,
+    },
   ];
 
-  const withdrawalRequests: WithdrawalRequestRecord[] = [
-    {
-      id: 'WTH-92140',
-      userId: 'usr_marcus',
-      userName: 'Marcus Sterling',
-      userEmail: 'marcus.s@fintechtrade.uk',
-      amount: 320.00,
-      currency: 'USD',
-      method: 'USDT (TRC20)',
-      address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-      network: 'TRON TRC-20',
-      status: 'PENDING',
-      createdAt: Date.now() - 1000 * 60 * 25,
-    },
-    {
-      id: 'WTH-92135',
-      userId: 'usr_amira',
-      userName: 'Amira Ben Ali',
-      userEmail: 'amira.fx@tunistrade.com',
-      amount: 180.00,
-      currency: 'USD',
-      method: 'Binance Pay ID',
-      address: 'PayID: 298410291',
-      network: 'Binance Internal Transfer',
-      status: 'APPROVED',
-      createdAt: Date.now() - 1000 * 60 * 180,
-      processedAt: Date.now() - 1000 * 60 * 140,
-    }
-  ];
+  const influencers: InfluencerRecord[] = loadJsonFile('influencers.json', initialInfluencers);
+  const influencerWithdrawals: InfluencerWithdrawalRecord[] = loadJsonFile('influencer-withdrawals.json', []);
 
   const notices: PlatformNoticeRecord[] = [
     {
@@ -337,14 +355,15 @@ async function startServer() {
     }
   ];
 
-  // Configurable Binance Pay Gateway Settings (Admin Managed)
-  const binanceGatewaySettings: BinanceGatewaySettings = {
+  // Configurable Binance Pay Gateway Settings (Admin Managed) - Persisted to file
+  const defaultGatewaySettings: BinanceGatewaySettings = {
     binanceId: '794380283',
     merchantName: 'CryptoBari',
     qrCodeUrl: '',
     notes: 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
     updatedAt: Date.now(),
   };
+  const binanceGatewaySettings: BinanceGatewaySettings = loadJsonFile('binance-settings.json', defaultGatewaySettings);
 
   // Live Support Tickets Desk
   const supportTickets: SupportTicketRecord[] = [
@@ -835,14 +854,59 @@ async function startServer() {
     res.json(depositRequests);
   });
 
-  // User submits a deposit request from wallet
-  app.post('/api/wallet/deposit-request', (req, res) => {
-    const { amount, method, txHash, binanceId, userId = 'usr_johirul', userName = 'Johirul Islam', userEmail = 'johirul4848@gmail.com' } = req.body;
+  // User submits a deposit request from wallet or deposit page
+  const handleDepositSubmission = (req: any, res: any) => {
+    const {
+      amount,
+      method,
+      txHash,
+      binanceId,
+      senderBinanceId,
+      promoCode,
+      userId = 'usr_johirul',
+      userName = 'Johirul Islam',
+      userEmail = 'johirul4848@gmail.com',
+    } = req.body;
+
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       return res.status(400).json({ error: 'Valid deposit amount required' });
     }
+    if (numAmount < 5) {
+      return res.status(400).json({ error: 'Minimum deposit amount is $5.00 USD.' });
+    }
 
+    // Check influencer promo code logic:
+    // Minimum $30 for promo bonus. $30-$49: 30%, $50-$69: 40%, $70+: 60%
+    // Influencer gets 20% commission on every deposit made with their code!
+    let matchedInfluencer: InfluencerRecord | undefined;
+    let bonusPercent = 0;
+    let bonusAmount = 0;
+    let totalCredited = numAmount;
+    let influencerCommission = 0;
+
+    if (promoCode && typeof promoCode === 'string') {
+      const cleanCode = promoCode.trim().toUpperCase();
+      matchedInfluencer = influencers.find(i => i.promoCode.toUpperCase() === cleanCode);
+
+      if (numAmount >= 30) {
+        if (numAmount >= 70) {
+          bonusPercent = 60;
+        } else if (numAmount >= 50) {
+          bonusPercent = 40;
+        } else {
+          bonusPercent = 30;
+        }
+
+        bonusAmount = parseFloat((numAmount * (bonusPercent / 100)).toFixed(2));
+        totalCredited = parseFloat((numAmount + bonusAmount).toFixed(2));
+      }
+
+      // Influencer always receives 20% commission on base deposit
+      influencerCommission = parseFloat((numAmount * 0.20).toFixed(2));
+    }
+
+    const resolvedBinanceId = senderBinanceId || binanceId || 'Unspecified';
     const newDeposit: DepositRequestRecord = {
       id: 'DEP-' + Math.floor(100000 + Math.random() * 900000),
       userId,
@@ -852,18 +916,32 @@ async function startServer() {
       currency: 'USD',
       method: method || 'Binance Pay',
       txHash: txHash || ('BPAY-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase()),
-      binanceId: binanceId ? String(binanceId).trim() : 'Unspecified',
+      binanceId: String(resolvedBinanceId).trim(),
+      promoCode: promoCode ? promoCode.trim().toUpperCase() : undefined,
+      bonusPercent: bonusPercent > 0 ? bonusPercent : undefined,
+      bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+      totalCredited,
+      influencerId: matchedInfluencer ? matchedInfluencer.id : undefined,
+      influencerCommission: matchedInfluencer ? influencerCommission : undefined,
       status: 'PENDING',
       createdAt: Date.now(),
     };
 
     depositRequests.unshift(newDeposit);
+    saveJsonFile('deposits.json', depositRequests);
+
     res.json({
       success: true,
       message: 'Deposit request submitted successfully. Awaiting Admin Approval.',
       deposit: newDeposit,
+      depositId: newDeposit.id,
+      bonusAmount,
+      totalCredited,
     });
-  });
+  };
+
+  app.post('/api/wallet/deposit-request', handleDepositSubmission);
+  app.post('/api/payment/deposit-request', handleDepositSubmission);
 
   // Admin approves deposit -> Automatically credits live balance and removes from pending
   app.post('/api/admin/deposits/:id/approve', (req, res) => {
@@ -879,19 +957,42 @@ async function startServer() {
     deposit.status = 'APPROVED';
     deposit.approvedAt = Date.now();
 
+    // Total amount to credit: base amount + promo bonus (if applicable)
+    const creditedAmount = deposit.totalCredited || deposit.amount;
+
     // Credit real platform live balance
-    walletState.liveBalance += deposit.amount;
+    walletState.liveBalance += creditedAmount;
+    if (deposit.bonusAmount) {
+      walletState.bonusBalance = (walletState.bonusBalance || 0) + deposit.bonusAmount;
+    }
 
     // Credit user if in registered broker users
     const user = brokerUsers.find(u => u.id === deposit.userId || u.email === deposit.userEmail);
     if (user) {
-      user.liveBalance += deposit.amount;
+      user.liveBalance += creditedAmount;
       user.totalDeposited += deposit.amount;
+      if (deposit.bonusAmount) {
+        user.bonusBalance = (user.bonusBalance || 0) + deposit.bonusAmount;
+      }
     }
+
+    // Credit 20% commission to influencer if deposit used a promo code
+    if (deposit.influencerId && deposit.influencerCommission) {
+      const inf = influencers.find(i => i.id === deposit.influencerId);
+      if (inf) {
+        inf.availableBalance = parseFloat((inf.availableBalance + deposit.influencerCommission).toFixed(2));
+        inf.totalEarned = parseFloat((inf.totalEarned + deposit.influencerCommission).toFixed(2));
+        inf.totalVolumeGenerated = parseFloat((inf.totalVolumeGenerated + deposit.amount).toFixed(2));
+        inf.referralCount += 1;
+        saveJsonFile('influencers.json', influencers);
+      }
+    }
+
+    saveJsonFile('deposits.json', depositRequests);
 
     res.json({
       success: true,
-      message: `Deposit of $${deposit.amount.toFixed(2)} approved! Live balance credited to user.`,
+      message: `Deposit of $${deposit.amount.toFixed(2)}${deposit.bonusAmount ? ` + $${deposit.bonusAmount.toFixed(2)} Promo Bonus` : ''} approved! Live balance credited to user.`,
       deposit,
       liveBalance: walletState.liveBalance,
     });
@@ -908,6 +1009,7 @@ async function startServer() {
 
     deposit.status = 'REJECTED';
     deposit.rejectedReason = reason || 'Transaction hash could not be verified on blockchain.';
+    saveJsonFile('deposits.json', depositRequests);
 
     res.json({
       success: true,
@@ -934,6 +1036,7 @@ async function startServer() {
       userId = 'usr_johirul',
       userName = 'Johirul Islam',
       userEmail = 'johirul4848@gmail.com',
+      activePromoBonus = 0,
     } = req.body;
 
     const numAmount = parseFloat(amount);
@@ -951,12 +1054,21 @@ async function startServer() {
     }
 
     const effectiveBalance = Math.max(walletState.liveBalance, !isNaN(clientBal) ? clientBal : 0);
+    const promoBonusDeduction = Math.max(
+      walletState.bonusBalance || 0,
+      typeof activePromoBonus === 'number' ? Math.max(0, activePromoBonus) : (parseFloat(activePromoBonus) || 0)
+    );
+    const withdrawableBalance = Math.max(0, parseFloat((effectiveBalance - promoBonusDeduction).toFixed(2)));
 
-    if (effectiveBalance < 10) {
-      return res.status(400).json({ error: 'Minimum live balance of $10.00 USD required to submit a withdrawal.' });
+    if (withdrawableBalance < 10) {
+      return res.status(400).json({
+        error: `Minimum withdrawable balance of $10.00 USD required. (Note: Promotional trading bonus of $${promoBonusDeduction.toFixed(2)} USD is strictly for trading margin and cannot be withdrawn).`
+      });
     }
-    if (effectiveBalance < numAmount) {
-      return res.status(400).json({ error: `Insufficient Live Balance ($${effectiveBalance.toFixed(2)} USD available) for this withdrawal request.` });
+    if (numAmount > withdrawableBalance) {
+      return res.status(400).json({
+        error: `Insufficient withdrawable funds. Promotional bonus of $${promoBonusDeduction.toFixed(2)} USD is for trading only. Maximum available to withdraw is $${withdrawableBalance.toFixed(2)} USD.`
+      });
     }
 
     // Deduct from live balance immediately into pending escrow
@@ -981,6 +1093,8 @@ async function startServer() {
     };
 
     withdrawalRequests.unshift(newWithdrawal);
+    saveJsonFile('withdrawals.json', withdrawalRequests);
+
     res.json({
       success: true,
       message: 'Withdrawal request submitted for Admin authorization.',
@@ -1004,6 +1118,8 @@ async function startServer() {
       user.totalWithdrawn += item.amount;
     }
 
+    saveJsonFile('withdrawals.json', withdrawalRequests);
+
     res.json({
       success: true,
       message: `Withdrawal of $${item.amount.toFixed(2)} approved and dispatched to ${item.address}.`,
@@ -1025,6 +1141,7 @@ async function startServer() {
 
     // Refund live balance
     walletState.liveBalance += item.amount;
+    saveJsonFile('withdrawals.json', withdrawalRequests);
 
     res.json({
       success: true,
@@ -1187,72 +1304,194 @@ async function startServer() {
     });
   });
 
+  // 6b. Influencer Promotion Program Management
+  app.get('/api/admin/influencers', (req, res) => {
+    res.json({
+      influencers,
+      withdrawals: influencerWithdrawals,
+      totalVolume: influencers.reduce((acc, i) => acc + i.totalVolumeGenerated, 0),
+      totalCommissions: influencers.reduce((acc, i) => acc + i.totalEarned, 0),
+    });
+  });
+
+  // Verify / lookup promo code for deposit calculation
+  app.get('/api/influencers/check-promo/:code', (req, res) => {
+    const { code } = req.params;
+    const cleanCode = (code || '').trim().toUpperCase();
+    const match = influencers.find(i => i.promoCode.toUpperCase() === cleanCode);
+    if (!match) {
+      return res.status(404).json({ valid: false, message: 'Invalid or unknown promotion code.' });
+    }
+    res.json({
+      valid: true,
+      influencerName: match.name,
+      promoCode: match.promoCode,
+      message: 'Promotion code verified! Deposit $30+ to unlock up to 60% bonus.',
+    });
+  });
+
+  // Influencer registers through server
+  app.post('/api/influencer/register', (req, res) => {
+    const { name, country, email, binanceId, customPromoCode } = req.body;
+    if (!name || !email || !binanceId) {
+      return res.status(400).json({ error: 'Name, email, and Binance Pay ID are required' });
+    }
+    const num = Math.floor(1000 + Math.random() * 9000);
+    const userId = `INF-${num}`;
+    const password = `CB${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Prepare preferred promo code or generate base
+    let basePromo = '';
+    if (customPromoCode && typeof customPromoCode === 'string') {
+      basePromo = customPromoCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase().trim();
+    }
+    if (!basePromo) {
+      const cleanName = (name || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4) || 'VIP';
+      basePromo = `${cleanName}${Math.floor(10 + Math.random() * 90)}`;
+    }
+
+    // Guarantee unique promo code: If duplicate exists, append incremental suffix
+    let promoCode = basePromo;
+    let suffix = 2;
+    while (influencers.some(i => i.promoCode.toUpperCase() === promoCode.toUpperCase())) {
+      promoCode = `${basePromo}${suffix++}`;
+    }
+
+    const newInf: InfluencerRecord = {
+      id: userId,
+      userId,
+      password,
+      promoCode,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      country: country || 'Bangladesh',
+      binanceId: binanceId.trim(),
+      availableBalance: 0.00,
+      totalEarned: 0.00,
+      totalWithdrawn: 0.00,
+      totalVolumeGenerated: 0.00,
+      referralCount: 0,
+      createdAt: Date.now(),
+    };
+
+    influencers.unshift(newInf);
+    saveJsonFile('influencers.json', influencers);
+    res.json({ success: true, influencer: newInf });
+  });
+
+  // Influencer submits withdrawal request - Minimum $60 balance requirement
+  app.post('/api/influencer/withdraw-request', (req, res) => {
+    const { influencerId, amount, binanceId } = req.body;
+    const numAmount = parseFloat(amount);
+    const inf = influencers.find(i => i.id === influencerId);
+    if (!inf) {
+      return res.status(404).json({ error: 'Influencer not found' });
+    }
+
+    // Must have at least $60 balance to request withdrawal
+    if (inf.availableBalance < 60) {
+      return res.status(400).json({
+        error: `Influencer balance must be at least $60.00 USD before requesting a withdrawal. Your current balance is $${inf.availableBalance.toFixed(2)} USD.`
+      });
+    }
+
+    if (isNaN(numAmount) || numAmount < 60) {
+      return res.status(400).json({ error: 'Minimum withdrawal amount is $60.00 USD.' });
+    }
+
+    if (numAmount > inf.availableBalance) {
+      return res.status(400).json({ error: `Insufficient available balance ($${inf.availableBalance.toFixed(2)} available)` });
+    }
+
+    // Deduct immediately from available balance
+    inf.availableBalance = parseFloat((inf.availableBalance - numAmount).toFixed(2));
+    inf.totalWithdrawn = parseFloat((inf.totalWithdrawn + numAmount).toFixed(2));
+    saveJsonFile('influencers.json', influencers);
+
+    const newWth: InfluencerWithdrawalRecord = {
+      id: 'IWTH-' + Math.floor(10000 + Math.random() * 90000),
+      influencerId: inf.id,
+      influencerName: inf.name,
+      userId: inf.userId,
+      binanceId: (binanceId || inf.binanceId).trim(),
+      amount: numAmount,
+      status: 'PENDING',
+      createdAt: Date.now(),
+    };
+
+    influencerWithdrawals.unshift(newWth);
+    saveJsonFile('influencer-withdrawals.json', influencerWithdrawals);
+    res.json({ success: true, withdrawal: newWth, availableBalance: inf.availableBalance });
+  });
+
+  // Admin approves influencer withdrawal
+  app.post('/api/admin/influencer-withdrawals/:id/approve', (req, res) => {
+    const { id } = req.params;
+    const item = influencerWithdrawals.find(w => w.id === id);
+    if (!item) {
+      return res.status(404).json({ error: 'Withdrawal not found' });
+    }
+    item.status = 'APPROVED';
+    item.processedAt = Date.now();
+    saveJsonFile('influencer-withdrawals.json', influencerWithdrawals);
+    res.json({ success: true, message: `Influencer withdrawal of $${item.amount.toFixed(2)} approved!`, item });
+  });
+
+  // Admin rejects influencer withdrawal -> refunds balance
+  app.post('/api/admin/influencer-withdrawals/:id/reject', (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const item = influencerWithdrawals.find(w => w.id === id);
+    if (!item) {
+      return res.status(404).json({ error: 'Withdrawal not found' });
+    }
+    item.status = 'REJECTED';
+    item.processedAt = Date.now();
+    item.rejectedReason = reason || 'Binance Pay ID verification failed.';
+
+    // Refund
+    const inf = influencers.find(i => i.id === item.influencerId);
+    if (inf) {
+      inf.availableBalance = parseFloat((inf.availableBalance + item.amount).toFixed(2));
+      inf.totalWithdrawn = Math.max(0, parseFloat((inf.totalWithdrawn - item.amount).toFixed(2)));
+      saveJsonFile('influencers.json', influencers);
+    }
+    saveJsonFile('influencer-withdrawals.json', influencerWithdrawals);
+
+    res.json({ success: true, message: 'Influencer withdrawal rejected and refunded to balance.', item });
+  });
+
   // 7. Finance & In-depth Audit (Deposit - Payouts = Net Balance, - Referral = Net Profit/Loss)
+  // Account starts clean from 0 as requested
   app.get('/api/admin/finance', (req, res) => {
     const totalDeposits = depositRequests
       .filter(d => d.status === 'APPROVED')
-      .reduce((acc, d) => acc + d.amount, 0) + 28450; // includes verified baseline
+      .reduce((acc, d) => acc + d.amount, 0);
 
     const dispatchedPayouts = withdrawalRequests
       .filter(w => w.status === 'APPROVED')
-      .reduce((acc, w) => acc + w.amount, 0) + 19820;
+      .reduce((acc, w) => acc + w.amount, 0);
 
-    // Total Deposits - Dispatched Payouts = Total Gross Balance
+    // Total Deposits - Dispatched Payouts = Total Gross Balance (Starts from 0.00)
     const totalBalanceAmount = totalDeposits - dispatchedPayouts;
 
     // Total Referral Commission
-    const referralCommissions = 3450.00;
+    const referralCommissions = 0.00;
 
     // Net Profit or Loss = (Total Deposits - Dispatched Payouts) - Referral Commission
     const netProfitOrLoss = totalBalanceAmount - referralCommissions;
     const isProfit = netProfitOrLoss >= 0;
 
-    // Daily breakdown for Admin (Smart Daily P&L Tracker)
+    // Daily breakdown for Admin (Starts clean from real live transactions)
     const dailyReports = [
       {
         date: 'Today (' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')',
-        deposits: 2850.00,
-        dispatchedPayouts: 1420.00,
-        netBalance: 1430.00,
-        referralCommission: 140.00,
-        netProfitLoss: 1290.00,
-        status: 'PROFIT',
-      },
-      {
-        date: 'Yesterday',
-        deposits: 3100.00,
-        dispatchedPayouts: 1750.00,
-        netBalance: 1350.00,
-        referralCommission: 165.00,
-        netProfitLoss: 1185.00,
-        status: 'PROFIT',
-      },
-      {
-        date: '2 Days Ago',
-        deposits: 1400.00,
-        dispatchedPayouts: 1950.00,
-        netBalance: -550.00,
-        referralCommission: 90.00,
-        netProfitLoss: -640.00,
-        status: 'LOSS',
-      },
-      {
-        date: '3 Days Ago',
-        deposits: 4200.00,
-        dispatchedPayouts: 2100.00,
-        netBalance: 2100.00,
-        referralCommission: 210.00,
-        netProfitLoss: 1890.00,
-        status: 'PROFIT',
-      },
-      {
-        date: '4 Days Ago',
-        deposits: 2950.00,
-        dispatchedPayouts: 1380.00,
-        netBalance: 1570.00,
-        referralCommission: 150.00,
-        netProfitLoss: 1420.00,
-        status: 'PROFIT',
+        deposits: totalDeposits,
+        dispatchedPayouts: dispatchedPayouts,
+        netBalance: totalBalanceAmount,
+        referralCommission: referralCommissions,
+        netProfitLoss: netProfitOrLoss,
+        status: isProfit ? 'PROFIT' : 'LOSS',
       },
     ];
 
@@ -1265,38 +1504,52 @@ async function startServer() {
       status: isProfit ? 'PROFIT' : 'LOSS',
       pendingDepositsVolume: depositRequests.filter(d => d.status === 'PENDING').reduce((acc, d) => acc + d.amount, 0),
       pendingWithdrawalsVolume: withdrawalRequests.filter(w => w.status === 'PENDING').reduce((acc, w) => acc + w.amount, 0),
-      reserveFund: 150000.00 + totalBalanceAmount,
+      reserveFund: totalBalanceAmount,
       dailyReports,
     });
   });
 
-  // 8. Binance Payment Gateway Settings (Admin Managed)
-  app.get('/api/payment/binance-settings', (req, res) => {
-    res.json(binanceGatewaySettings);
+  // 8. Binance Payment Gateway Settings (Admin Managed & Persisted)
+  const getBinanceSettingsResponse = () => ({
+    ...binanceGatewaySettings,
+    qrImage: binanceGatewaySettings.qrCodeUrl,
+    instructions: binanceGatewaySettings.notes,
   });
 
-  app.post('/api/admin/payment/binance-settings', (req, res) => {
-    const { binanceId, merchantName, qrCodeUrl, notes } = req.body;
+  app.get('/api/payment/binance-settings', (req, res) => {
+    res.json(getBinanceSettingsResponse());
+  });
+
+  const handleUpdateBinanceSettings = (req: any, res: any) => {
+    const { binanceId, merchantName, qrCodeUrl, qrImage, notes, instructions } = req.body;
     if (binanceId !== undefined && String(binanceId).trim()) {
       binanceGatewaySettings.binanceId = String(binanceId).trim();
     }
     if (merchantName !== undefined && String(merchantName).trim()) {
       binanceGatewaySettings.merchantName = String(merchantName).trim();
     }
-    if (qrCodeUrl !== undefined) {
-      binanceGatewaySettings.qrCodeUrl = String(qrCodeUrl).trim();
+    const resolvedQr = qrImage !== undefined ? qrImage : (qrCodeUrl !== undefined ? qrCodeUrl : undefined);
+    if (resolvedQr !== undefined) {
+      binanceGatewaySettings.qrCodeUrl = String(resolvedQr).trim();
     }
-    if (notes !== undefined) {
-      binanceGatewaySettings.notes = String(notes).trim();
+    const resolvedNotes = instructions !== undefined ? instructions : (notes !== undefined ? notes : undefined);
+    if (resolvedNotes !== undefined) {
+      binanceGatewaySettings.notes = String(resolvedNotes).trim();
     }
     binanceGatewaySettings.updatedAt = Date.now();
+    saveJsonFile('binance-settings.json', binanceGatewaySettings);
 
+    const fullResponse = getBinanceSettingsResponse();
     res.json({
       success: true,
-      message: 'Binance Pay gateway configuration updated successfully.',
-      settings: binanceGatewaySettings,
+      message: 'Binance Pay gateway configuration updated and permanently saved.',
+      settings: fullResponse,
+      ...fullResponse,
     });
-  });
+  };
+
+  app.post('/api/admin/payment/binance-settings', handleUpdateBinanceSettings);
+  app.post('/api/payment/binance-settings', handleUpdateBinanceSettings);
 
   // 9. 24/7 Support Desk & Ticketing API
   app.get('/api/support/tickets', (req, res) => {

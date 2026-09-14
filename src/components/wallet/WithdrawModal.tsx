@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { getTraderTier } from '../../utils/tier';
+import { influencerService } from '../../services/influencerService';
 
 interface WithdrawModalProps {
   isOpen: boolean;
@@ -31,8 +32,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   userEmail = 'johirul4848@gmail.com',
   userName = 'Johirul Islam',
 }) => {
+  const activePromoBonus = influencerService.getActivePromoBonus();
+  const withdrawableBalance = Math.max(0, parseFloat((liveBalance - activePromoBonus).toFixed(2)));
+
   const [receiverBinanceId, setReceiverBinanceId] = useState<string>('');
-  const [withdrawAmount, setWithdrawAmount] = useState<number>(() => Math.max(10, Math.min(50, liveBalance)));
+  const [withdrawAmount, setWithdrawAmount] = useState<number>(() => Math.max(10, Math.min(50, withdrawableBalance)));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedWithdrawal, setSubmittedWithdrawal] = useState<any | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -41,12 +45,12 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
 
   const tierInfo = getTraderTier(liveBalance);
   const MIN_WITHDRAWAL = 10.0;
-  const isBalanceEligible = liveBalance >= MIN_WITHDRAWAL;
+  const isBalanceEligible = withdrawableBalance >= MIN_WITHDRAWAL;
 
   const handleSetPercent = (pct: number) => {
     sound.playClick();
-    if (liveBalance <= 0) return;
-    const calculated = Math.floor(liveBalance * pct);
+    if (withdrawableBalance <= 0) return;
+    const calculated = Math.floor(withdrawableBalance * pct);
     setWithdrawAmount(Math.max(0, calculated));
   };
 
@@ -55,7 +59,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     setErrorMsg(null);
 
     if (!isBalanceEligible) {
-      setErrorMsg(`Your live account balance ($${liveBalance.toFixed(2)}) is below the minimum required withdrawal balance of $10.00.`);
+      if (activePromoBonus > 0 && liveBalance >= MIN_WITHDRAWAL) {
+        setErrorMsg(`Your withdrawable balance is $${withdrawableBalance.toFixed(2)} USD. The promotional bonus of $${activePromoBonus.toFixed(2)} USD is for trading only and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`);
+      } else {
+        setErrorMsg(`Your live account balance ($${liveBalance.toFixed(2)}) is below the minimum required withdrawal balance of $10.00.`);
+      }
       return;
     }
 
@@ -64,8 +72,8 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       return;
     }
 
-    if (withdrawAmount > liveBalance) {
-      setErrorMsg(`Insufficient funds. Your available live balance is $${liveBalance.toFixed(2)}.`);
+    if (withdrawAmount > withdrawableBalance) {
+      setErrorMsg(`Cannot withdraw promotional bonus ($${activePromoBonus.toFixed(2)} USD). Bonus credits are strictly for trading and cannot be withdrawn. Your withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD.`);
       return;
     }
 
@@ -89,6 +97,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
           binanceId: receiverBinanceId.trim(),
           network: 'Binance Pay UID Transfer',
           currentLiveBalance: liveBalance,
+          activePromoBonus,
           userName,
           userEmail,
         }),
@@ -99,6 +108,9 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         sound.playWin();
         const record = data.withdrawal;
         setSubmittedWithdrawal(record);
+        if (activePromoBonus > 0) {
+          influencerService.forfeitPromoBonus();
+        }
         try {
           const raw = localStorage.getItem('cb_admin_shared_withdrawals');
           const existing = raw ? JSON.parse(raw) : [];
@@ -115,6 +127,9 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     } catch {
       // Offline fallback
       sound.playWin();
+      if (activePromoBonus > 0) {
+        influencerService.forfeitPromoBonus();
+      }
       const mockWithdrawal = {
         id: 'WTH-' + Math.floor(10000 + Math.random() * 90000),
         userId: 'usr_johirul',
@@ -255,11 +270,21 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                 <div>
                   <div className="text-xs text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                     <Wallet className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Available Live Balance</span>
+                    <span>Live Account Balance</span>
                   </div>
                   <div className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">
                     ${liveBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
+                  {activePromoBonus > 0 && (
+                    <div className="mt-1.5 space-y-0.5 font-mono text-[11px]">
+                      <div className="text-amber-400 font-bold">
+                        • Promo Bonus: ${activePromoBonus.toFixed(2)} USD <span className="text-[10px] text-amber-300/80 font-normal">(Trading only, non-withdrawable)</span>
+                      </div>
+                      <div className="text-emerald-400 font-bold">
+                        • Available to Withdraw: ${withdrawableBalance.toFixed(2)} USD
+                      </div>
+                    </div>
+                  )}
                   <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2">
                     <span>Trader Status:</span>
                     <span className={`px-2 py-0.5 rounded text-[10px] ${tierInfo.badgeClass}`}>
@@ -274,6 +299,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                     <span>Binance Pay (Instant)</span>
                   </div>
                   <div className="text-[11px] text-emerald-400 font-bold">Minimum: $10.00 USD</div>
+                  {activePromoBonus > 0 && (
+                    <div className="text-[10px] text-cyan-400 font-mono">
+                      Max Payout: ${withdrawableBalance.toFixed(2)}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -347,7 +377,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                       Withdrawal Amount (USD)
                     </label>
                     <span className="text-[10px] text-amber-400 font-bold">
-                      Min: $10.00 • Max: ${liveBalance.toFixed(2)}
+                      Min: $10.00 • Max: ${withdrawableBalance.toFixed(2)}
                     </span>
                   </div>
 
@@ -356,7 +386,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                     <input
                       type="number"
                       min="10"
-                      max={liveBalance}
+                      max={withdrawableBalance}
                       step="1"
                       required
                       value={withdrawAmount || ''}
@@ -399,6 +429,14 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                       ${Math.max(0, liveBalance - withdrawAmount).toFixed(2)} USD
                     </span>
                   </div>
+                </div>
+
+                {/* Promo Bonus Policy Alert */}
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Promotion Policy:</strong> All real balance and profits above promotional credits are 100% withdrawable. If you have an active promo bonus credit, processing this withdrawal will automatically forfeit any remaining promotional trading bonus.
+                  </span>
                 </div>
 
                 {/* Submit Action Button */}

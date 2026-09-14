@@ -18,8 +18,11 @@ import {
   TrendingUp,
   Wallet,
   Zap,
+  Gift,
+  Tag,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { influencerService } from '../../services/influencerService';
 
 interface DepositPageProps {
   onBack: () => void;
@@ -46,6 +49,10 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   const [depositAmount, setDepositAmount] = useState<number>(50);
   const [customAmountInput, setCustomAmountInput] = useState<string>('50');
   const [senderBinanceId, setSenderBinanceId] = useState<string>('');
+  const [promoCodeInput, setPromoCodeInput] = useState<string>('');
+  const [activePromoCode, setActivePromoCode] = useState<string>('');
+  const [promoSuccessMsg, setPromoSuccessMsg] = useState<string | null>(null);
+  const [promoErrorMsg, setPromoErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [submittedDeposit, setSubmittedDeposit] = useState<any | null>(null);
@@ -75,18 +82,24 @@ export const DepositPage: React.FC<DepositPageProps> = ({
       })
       .catch(() => {});
 
-    // Fetch recent deposits
-    fetch('/api/admin/deposits')
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setRecentDeposits(data.slice(0, 5));
-        }
-      })
-      .catch(() => {});
+    // Fetch recent deposits from treasury
+    const fetchDeposits = () => {
+      fetch('/api/admin/deposits')
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setRecentDeposits(data.slice(0, 8));
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchDeposits();
+    window.addEventListener('cb_deposits_updated', fetchDeposits);
+    return () => window.removeEventListener('cb_deposits_updated', fetchDeposits);
   }, []);
 
-  const quickAmounts = [10, 25, 50, 100, 250, 500, 1000];
+  const quickAmounts = [5, 10, 25, 50, 100, 250, 500, 1000];
 
   const handleSelectQuickAmount = (amt: number) => {
     sound.playClick();
@@ -110,14 +123,61 @@ export const DepositPage: React.FC<DepositPageProps> = ({
     setTimeout(() => setCopiedGatewayId(false), 2500);
   };
 
+  // Promo code activation handler
+  const handleActivatePromo = (codeToActivate?: string) => {
+    sound.playClick();
+    const targetCode = (codeToActivate || promoCodeInput).trim().toUpperCase();
+    if (!targetCode) {
+      setPromoErrorMsg('Please enter or select a promo code to activate.');
+      setPromoSuccessMsg(null);
+      return;
+    }
+
+    const validation = influencerService.validatePromoCode(targetCode);
+    if (validation.valid) {
+      sound.playWin();
+      setActivePromoCode(validation.code);
+      setPromoCodeInput(validation.code);
+      setPromoSuccessMsg(validation.message);
+      setPromoErrorMsg(null);
+    } else {
+      setPromoErrorMsg(validation.message);
+      setPromoSuccessMsg(null);
+    }
+  };
+
+  const handleDeactivatePromo = () => {
+    sound.playClick();
+    setActivePromoCode('');
+    setPromoCodeInput('');
+    setPromoSuccessMsg(null);
+    setPromoErrorMsg(null);
+  };
+
+  // Tiered bonus calculations
+  const cleanPromo = activePromoCode.trim().toUpperCase();
+  const hasPromo = cleanPromo.length > 0;
+  let bonusPercent = 0;
+  if (hasPromo && depositAmount >= 30) {
+    if (depositAmount >= 70) {
+      bonusPercent = 60;
+    } else if (depositAmount >= 50) {
+      bonusPercent = 40;
+    } else {
+      bonusPercent = 30;
+    }
+  }
+  const bonusAmount = hasPromo && bonusPercent > 0 ? parseFloat((depositAmount * (bonusPercent / 100)).toFixed(2)) : 0;
+  const totalCredited = parseFloat((depositAmount + bonusAmount).toFixed(2));
+
   const handleSubmitDeposit = async () => {
     if (!senderBinanceId.trim()) {
       setErrorMsg('Please enter your Sender Binance ID or Pay UID for payment verification.');
       return;
     }
 
-    if (depositAmount < 1) {
-      setErrorMsg('Minimum deposit amount is $1.00 USD.');
+    if (depositAmount < 5) {
+      setErrorMsg('Minimum deposit amount is $5.00 USD. You can deposit at least $5.');
       return;
     }
 
@@ -133,6 +193,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           amount: depositAmount,
           method: 'BINANCE_PAY',
           senderBinanceId: senderBinanceId.trim(),
+          promoCode: cleanPromo || undefined,
           userEmail,
           userName,
         }),
@@ -142,14 +203,38 @@ export const DepositPage: React.FC<DepositPageProps> = ({
 
       if (data.success) {
         sound.playWin();
+        const depId = data.depositId || data.deposit?.id || `DEP-${Math.floor(100000 + Math.random() * 900000)}`;
         setSubmittedDeposit({
-          id: data.depositId,
+          id: depId,
           amount: depositAmount,
           senderBinanceId: senderBinanceId.trim(),
           receiverBinanceId: gatewaySettings.binanceId,
+          promoCode: cleanPromo || undefined,
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited: totalCredited,
           createdAt: new Date().toISOString(),
           status: 'PENDING_CONFIRMATION',
         });
+        if (cleanPromo) {
+          influencerService.processDepositWithPromo({
+            depositId: depId,
+            traderName: userName,
+            traderEmail: userEmail,
+            depositAmount,
+            promoCode: cleanPromo,
+          });
+        }
+        setRecentDeposits(prev => [
+          {
+            id: depId,
+            amount: depositAmount,
+            status: 'PENDING',
+            promoCode: cleanPromo || undefined,
+            createdAt: Date.now(),
+          },
+          ...prev,
+        ]);
+        window.dispatchEvent(new CustomEvent('cb_deposits_updated'));
         onDepositSuccess(depositAmount, 'BINANCE_PAY', senderBinanceId.trim());
       } else {
         setErrorMsg(data.error || 'Failed to submit deposit request. Please try again.');
@@ -163,9 +248,32 @@ export const DepositPage: React.FC<DepositPageProps> = ({
         amount: depositAmount,
         senderBinanceId: senderBinanceId.trim(),
         receiverBinanceId: gatewaySettings.binanceId,
+        promoCode: cleanPromo || undefined,
+        bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+        totalCredited: totalCredited,
         createdAt: new Date().toISOString(),
         status: 'PENDING_CONFIRMATION',
       });
+      if (cleanPromo) {
+        influencerService.processDepositWithPromo({
+          depositId: mockId,
+          traderName: userName,
+          traderEmail: userEmail,
+          depositAmount,
+          promoCode: cleanPromo,
+        });
+      }
+      setRecentDeposits(prev => [
+        {
+          id: mockId,
+          amount: depositAmount,
+          status: 'PENDING',
+          promoCode: cleanPromo || undefined,
+          createdAt: Date.now(),
+        },
+        ...prev,
+      ]);
+      window.dispatchEvent(new CustomEvent('cb_deposits_updated'));
       onDepositSuccess(depositAmount, 'BINANCE_PAY', senderBinanceId.trim());
     } finally {
       setIsSubmitting(false);
@@ -425,29 +533,36 @@ export const DepositPage: React.FC<DepositPageProps> = ({
         {/* DEPOSIT AMOUNT & SENDER BINANCE ID SUBMISSION FORM */}
         {/* ========================================================================= */}
         <div className="p-6 rounded-3xl bg-[#0f1422] border border-slate-800 space-y-5 shadow-xl">
-          <div className="space-y-1">
+          <div className="flex items-center justify-between">
             <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
               Select Deposit Amount (USD)
             </label>
-            <p className="text-[11px] text-slate-400">
-              Pick a quick amount or type your custom deposit value.
-            </p>
+            <span className="text-[11px] text-amber-400 font-mono font-bold bg-amber-400/10 px-2.5 py-1 rounded-lg border border-amber-400/30">
+              Min Deposit: $5.00 USD (at least $5)
+            </span>
           </div>
 
           {/* Quick Preset Amount Buttons */}
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+          <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
             {quickAmounts.map((amt) => (
               <button
                 key={amt}
                 type="button"
                 onClick={() => handleSelectQuickAmount(amt)}
-                className={`py-2 rounded-xl text-xs font-black transition-all cursor-pointer border active:scale-95 ${
+                className={`py-2 px-1 rounded-xl text-xs font-black transition-all cursor-pointer border active:scale-95 flex flex-col items-center justify-center gap-0.5 ${
                   depositAmount === amt
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.4)] scale-105'
                     : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700/80'
                 }`}
               >
-                ${amt}
+                <span>${amt}</span>
+                {amt === 5 && (
+                  <span className={`text-[8px] px-1 py-0.2 rounded font-black ${
+                    depositAmount === amt ? 'bg-slate-950 text-amber-400' : 'bg-amber-400/20 text-amber-300'
+                  }`}>
+                    Min $5
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -460,11 +575,10 @@ export const DepositPage: React.FC<DepositPageProps> = ({
             <input
               id="deposit-custom-amount-input"
               type="number"
-              min="1"
+              min="5"
               step="any"
               value={customAmountInput}
               onChange={handleCustomAmountChange}
-              placeholder="Enter custom deposit amount..."
               className="w-full pl-9 pr-16 py-3.5 bg-slate-900/90 border-2 border-slate-700 focus:border-amber-400 rounded-2xl text-white font-mono text-lg font-black outline-none transition-colors"
             />
             <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400 font-mono">
@@ -485,12 +599,154 @@ export const DepositPage: React.FC<DepositPageProps> = ({
               type="text"
               value={senderBinanceId}
               onChange={(e) => setSenderBinanceId(e.target.value)}
-              placeholder="e.g. 794380283 or your Binance UID"
               className="w-full px-4 py-3 bg-slate-900/90 border border-slate-700 focus:border-amber-400 rounded-xl text-white font-mono text-sm outline-none transition-colors"
             />
-            <p className="text-[11px] text-slate-400">
-              Enter your Binance ID / Pay UID so our treasury automatically matches and approves your transfer.
-            </p>
+          </div>
+
+          {/* ========================================================= */}
+          {/* PROMOTION CODE OFFER ACTIVATION SECTION */}
+          {/* ========================================================= */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-[#151c2e] to-[#0f1524] border border-amber-500/35 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+              <div className="flex items-center gap-2">
+                <Gift className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-black text-white tracking-wide">
+                  Promotion Code & Trading Bonus Offer
+                </span>
+              </div>
+              <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-400/20 px-2 py-0.5 rounded-full border border-amber-400/30">
+                Up to +60% Bonus
+              </span>
+            </div>
+
+            {/* Active Code Status Header if Applied */}
+            {hasPromo ? (
+              <div className="p-3 rounded-xl bg-gradient-to-r from-emerald-950/80 to-[#0e221b] border border-emerald-500/50 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center font-black text-xs">
+                    <Check className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black text-white font-mono tracking-wider">
+                        {cleanPromo}
+                      </span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500 text-slate-950 uppercase">
+                        Offer Active
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-300">
+                      Promotional bonus offer active on this deposit request!
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDeactivatePromo}
+                  className="px-2.5 py-1 text-[10px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg border border-rose-500/30 transition cursor-pointer"
+                >
+                  Remove Offer
+                </button>
+              </div>
+            ) : (
+              /* Promo Code Input & Activate Function */
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={promoCodeInput}
+                      onChange={(e) => {
+                        setPromoCodeInput(e.target.value.toUpperCase());
+                        setPromoErrorMsg(null);
+                      }}
+                      className="w-full pl-9 pr-3 py-2.5 bg-slate-900/90 border border-amber-500/40 rounded-xl text-xs font-mono font-black text-amber-300 tracking-wider uppercase focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleActivatePromo()}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-xs cursor-pointer transition shadow-md flex items-center gap-1.5 shrink-0 active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Activate Offer</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Messages */}
+            {promoSuccessMsg && (
+              <div className="text-[11px] text-emerald-400 bg-emerald-500/15 p-2 rounded-lg border border-emerald-500/30 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                <span>{promoSuccessMsg}</span>
+              </div>
+            )}
+            {promoErrorMsg && (
+              <div className="text-[11px] text-rose-400 bg-rose-500/15 p-2 rounded-lg border border-rose-500/30 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                <span>{promoErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Dynamic Bonus Preview & Threshold Calculator */}
+            {hasPromo && (
+              <div className="pt-2 border-t border-slate-800">
+                {depositAmount < 30 ? (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                    <div className="text-[11px] text-amber-300 flex items-start gap-1.5">
+                      <Info className="w-3.5 h-3.5 shrink-0 text-amber-400 mt-0.5" />
+                      <span>
+                        Code <strong>{cleanPromo}</strong> is active! Deposit at least <strong>$30.00 USD</strong> to unlock your promotional trading bonus.
+                      </span>
+                    </div>
+                    {/* Quick Select Buttons to reach bonus threshold */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectQuickAmount(30)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 text-[10px] font-bold border border-amber-500/40 transition cursor-pointer"
+                      >
+                        Set $30 (+30% Bonus)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectQuickAmount(50)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 text-[10px] font-bold border border-amber-500/40 transition cursor-pointer"
+                      >
+                        Set $50 (+40% Bonus)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectQuickAmount(70)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 text-[10px] font-bold border border-amber-500/40 transition cursor-pointer"
+                      >
+                        Set $70 (+60% Max Bonus)
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 p-3 rounded-xl bg-gradient-to-br from-emerald-950/60 to-[#0e1d17] border border-emerald-500/40 text-xs">
+                    <div className="flex items-center justify-between font-mono">
+                      <span className="text-slate-300">Base Deposit Amount:</span>
+                      <span className="text-white font-bold">${depositAmount.toFixed(2)} USD</span>
+                    </div>
+                    <div className="flex items-center justify-between font-mono">
+                      <span className="text-emerald-400 font-bold">Promo Bonus Unlocked (+{bonusPercent}%):</span>
+                      <span className="text-emerald-400 font-bold text-sm">+${bonusAmount.toFixed(2)} USD</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-emerald-500/20 pt-1 font-mono font-black">
+                      <span className="text-white">Credited to Live Account Balance:</span>
+                      <span className="text-amber-400 text-base">${totalCredited.toFixed(2)} USD</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 leading-tight pt-1">
+                      * Bonus dollars are credited for trading only. Profits generated above bonus are 100% withdrawable real money.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Error Alert */}
@@ -502,7 +758,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           )}
 
           {/* =================================================================== */}
-          {/* SUBMIT BUTTON WITH AMOUNT (Clean, Concise, Exactly as requested) */}
+          {/* SUBMIT BUTTON WITH AMOUNT */}
           {/* =================================================================== */}
           <button
             id="deposit-submit-request-btn"
@@ -519,23 +775,29 @@ export const DepositPage: React.FC<DepositPageProps> = ({
             ) : (
               <>
                 <Plus className="w-5 h-5 stroke-[3]" />
-                {/* Short, elegant button text with amount as requested */}
-                <span>Submit Deposit (${depositAmount})</span>
+                <span>
+                  Submit Deposit (${depositAmount}
+                  {hasPromo && bonusAmount > 0 ? ` + $${bonusAmount} Bonus` : ''})
+                </span>
               </>
             )}
           </button>
         </div>
 
         {/* Recent Deposits Status Table */}
-        {recentDeposits.length > 0 && (
-          <div className="p-5 rounded-3xl bg-[#0e1320] border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                Recent Deposits History
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">Treasury Live Sync</span>
+        <div className="p-5 rounded-3xl bg-[#0e1320] border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Recent Deposits History
             </div>
+            <span className="text-[10px] text-slate-500 font-mono">Treasury Live Sync</span>
+          </div>
 
+          {recentDeposits.length === 0 ? (
+            <div className="py-6 text-center text-xs text-slate-500">
+              No deposit history recorded yet. New Binance Pay deposits will appear here in real time.
+            </div>
+          ) : (
             <div className="divide-y divide-slate-800/80">
               {recentDeposits.map((dep) => (
                 <div key={dep.id} className="py-2.5 flex items-center justify-between text-xs">
@@ -563,8 +825,8 @@ export const DepositPage: React.FC<DepositPageProps> = ({
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Bottom Navigation */}
         <div className="pt-4 pb-8 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-800/60">

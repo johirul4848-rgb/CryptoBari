@@ -1,5 +1,21 @@
 import React, { useState } from 'react';
-import { X, Lock, Mail, User, Globe, Eye, EyeOff, ShieldCheck, CheckCircle2, Sparkles, ArrowRight } from 'lucide-react';
+import {
+  X,
+  Lock,
+  Mail,
+  User,
+  Globe,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  CheckCircle2,
+  Sparkles,
+  ArrowRight,
+  TrendingUp,
+  Gift,
+  Zap,
+  Award,
+} from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { auth, db } from '../../lib/firebase';
 import {
@@ -10,6 +26,7 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { referralService } from '../../services/referralService';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -47,17 +64,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [sponsorCodeInput, setSponsorCodeInput] = useState('');
   const [selectedCountry, setSelectedCountry] = useState('BD');
   const [showPassword, setShowPassword] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [sponsorNotice, setSponsorNotice] = useState('');
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setSponsorNotice('');
 
     if (!email.trim() || !email.includes('@')) {
       setErrorMessage('Please enter a valid email address.');
@@ -101,6 +121,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           }
         }
 
+        // Check if referral sponsor code was supplied
+        let sponsorActivated = null;
+        if (sponsorCodeInput.trim()) {
+          const res = referralService.activateSponsor(sponsorCodeInput.trim(), fullName.trim());
+          if (res.success) {
+            sponsorActivated = sponsorCodeInput.trim().toUpperCase();
+            setSponsorNotice(`🎉 $10.00 Welcome Bonus credited from sponsor code ${sponsorActivated}!`);
+          }
+        }
+
         // Create user document in Firestore
         try {
           await setDoc(doc(db, 'users', user.uid), {
@@ -110,11 +140,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             country: countryStr,
             createdAt: Date.now(),
             role: user.email === 'Johirul4848@gmail.com' ? 'ADMIN' : 'TRADER',
+            referredBy: sponsorActivated,
             wallet: {
               demoBalance: 10000,
               liveBalance: 0,
-              currency: 'USD'
-            }
+              currency: 'USD',
+            },
           }, { merge: true });
         } catch (dbErr) {
           console.warn('Firestore user doc init:', dbErr);
@@ -179,7 +210,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     sound.playClick();
 
     const provider = new GoogleAuthProvider();
-    // Force Google Account Chooser UI so user can select their Google account
     provider.setCustomParameters({ prompt: 'select_account' });
 
     try {
@@ -189,7 +219,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const countryObj = COUNTRIES.find((c) => c.code === selectedCountry);
       const countryStr = countryObj ? `${countryObj.flag} ${countryObj.name}` : 'Global Trader';
 
-      // Sync Firestore profile
       try {
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
@@ -205,8 +234,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             wallet: {
               demoBalance: 10000,
               liveBalance: 0,
-              currency: 'USD'
-            }
+              currency: 'USD',
+            },
           }, { merge: true });
         }
       } catch (dbErr) {
@@ -224,11 +253,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       console.error('Google Sign-in Error:', err);
       sound.playLose();
       if (err.code === 'auth/popup-blocked') {
-        setErrorMessage('The Google sign-in popup was blocked by your browser or sandbox iframe. Please allow popups or use Email & Password below.');
+        setErrorMessage('The Google sign-in popup was blocked. Please allow popups or use Email & Password below.');
       } else if (err.code === 'auth/popup-closed-by-user') {
         setErrorMessage('Google sign-in was cancelled. Please try again.');
-      } else if (err.code === 'auth/cancelled-popup-request') {
-        setErrorMessage('A sign-in window is already open. Please complete or close it.');
       } else {
         setErrorMessage(err.message || 'Failed to sign in with Google.');
       }
@@ -248,27 +275,58 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4 bg-black/80 backdrop-blur-md select-none animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-[#0f1422] border border-slate-700/80 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.9),0_0_40px_rgba(245,158,11,0.15)] overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Glow Header Accent */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-emerald-400 to-sky-500 shrink-0" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-2xl select-none animate-in fade-in duration-200">
+      {/* 3D Glassmorphism Container with White Glass & Prismatic Highlights */}
+      <div className="relative w-full max-w-lg rounded-3xl bg-[#0a101d]/85 backdrop-blur-3xl border border-white/30 shadow-[0_30px_100px_rgba(0,0,0,0.9),0_0_60px_rgba(255,255,255,0.12),inset_0_1.5px_2px_rgba(255,255,255,0.6)] overflow-hidden flex flex-col max-h-[94vh]">
+        {/* Iridescent Top Accent & Ambient Refractive Glow */}
+        <div className="absolute -top-24 -left-24 w-72 h-72 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -top-20 -right-20 w-72 h-72 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-10 left-1/3 w-64 h-64 bg-sky-500/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-emerald-400 via-sky-400 to-amber-300 shrink-0" />
 
-        {/* Modal Header */}
-        <div className="p-4 md:p-5 pb-3 flex items-center justify-between border-b border-slate-800/80 bg-[#121828]/60">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black shadow-md shadow-amber-500/20">
+        {/* Live Binance Ticker Header with 3D Trading Badges */}
+        <div className="p-4 sm:p-5 pb-3 border-b border-white/15 bg-white/[0.04] flex items-center justify-between relative">
+          <div className="flex items-center gap-3">
+            {/* 3D Golden Logo Badge with Specular Glow */}
+            <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-100 flex items-center justify-center text-slate-950 font-black shadow-[0_4px_20px_rgba(245,158,11,0.5),inset_0_1.5px_2px_rgba(255,255,255,0.9)] ring-2 ring-amber-400/50 text-lg">
               CB
+              {/* Mini pulse ring */}
+              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-400 ring-2 ring-slate-950 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
             </div>
+
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-sm text-slate-100 tracking-tight">
+              <div className="flex items-center gap-2">
+                <span className="font-black text-base sm:text-lg text-white tracking-tight drop-shadow-sm">
                   CryptoBari Terminal
                 </span>
-                <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 rounded-full">
-                  Binance Live
+                <span className="text-[10px] font-mono font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-[0_0_12px_rgba(16,185,129,0.25)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  Binance L2 Live
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">Official High-Yield Binary Broker</p>
+
+              {/* 3D Floating Trading Tokens Strip */}
+              <div className="flex items-center gap-2 mt-1 text-[11px] font-mono">
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.08] backdrop-blur-md border border-amber-400/40 shadow-sm text-white">
+                  <span className="w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 font-black text-[10px] flex items-center justify-center">₿</span>
+                  <span className="font-bold">BTC</span>
+                  <span className="text-amber-300 font-extrabold">$79.0k</span>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.08] backdrop-blur-md border border-sky-400/40 shadow-sm text-white">
+                  <span className="w-4 h-4 rounded-full bg-sky-400/20 text-sky-400 font-black text-[10px] flex items-center justify-center">Ξ</span>
+                  <span className="font-bold">ETH</span>
+                  <span className="text-sky-300 font-extrabold">$2.6k</span>
+                </div>
+                <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.08] backdrop-blur-md border border-purple-400/40 shadow-sm text-white">
+                  <span className="w-4 h-4 rounded-full bg-purple-400/20 text-purple-400 font-black text-[10px] flex items-center justify-center">◎</span>
+                  <span className="font-bold">SOL</span>
+                  <span className="text-purple-300 font-extrabold">$103</span>
+                </div>
+                <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.08] backdrop-blur-md border border-emerald-400/40 shadow-sm text-white">
+                  <span className="w-4 h-4 rounded-full bg-emerald-400/20 text-emerald-400 font-black text-[10px] flex items-center justify-center">₮</span>
+                  <span className="font-bold">USDT</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -278,16 +336,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               sound.playClick();
               onClose();
             }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-300 hover:text-white bg-white/[0.08] hover:bg-white/[0.18] border border-white/20 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4 stroke-[2.5]" />
           </button>
         </div>
 
-        {/* Scrollable Form Body */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-5 space-y-4">
-          {/* Tab Switcher */}
-          <div className="grid grid-cols-2 p-1 bg-[#141b2b] rounded-xl border border-slate-800">
+        {/* Scrollable Form Body with Frosted White Glass Styling */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-4">
+          {/* Modern 3D White Glass Segmented Control */}
+          <div className="grid grid-cols-2 p-1.5 bg-white/[0.08] backdrop-blur-xl rounded-2xl border border-white/25 shadow-[inset_0_1px_2px_rgba(255,255,255,0.3)]">
             <button
               id="auth-tab-register"
               type="button"
@@ -296,13 +354,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setMode('register');
                 setErrorMessage('');
               }}
-              className={`py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
+              className={`py-2.5 px-3 text-xs sm:text-sm font-black rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                 mode === 'register'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 shadow-md shadow-amber-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-slate-950 shadow-[0_6px_20px_rgba(245,158,11,0.5),inset_0_1px_2px_rgba(255,255,255,0.8)]'
+                  : 'text-slate-300 hover:text-white hover:bg-white/[0.06]'
               }`}
             >
-              Create Account
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Create Account</span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-slate-950/25 rounded-md font-mono font-black border border-slate-950/10">
+                +$10 Bonus
+              </span>
             </button>
             <button
               id="auth-tab-login"
@@ -312,25 +374,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setMode('login');
                 setErrorMessage('');
               }}
-              className={`py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
+              className={`py-2.5 px-3 text-xs sm:text-sm font-black rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                 mode === 'login'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 shadow-md shadow-amber-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-slate-950 shadow-[0_6px_20px_rgba(245,158,11,0.5),inset_0_1px_2px_rgba(255,255,255,0.8)]'
+                  : 'text-slate-300 hover:text-white hover:bg-white/[0.06]'
               }`}
             >
-              Sign In
+              <Zap className="w-3.5 h-3.5" />
+              <span>Sign In</span>
             </button>
           </div>
 
-          {/* Quick Google 1-Click Action */}
+          {/* Quick Google 1-Click Action in Frosted White Glass */}
           <button
             id="google-auth-btn"
             type="button"
             onClick={handleGoogleLogin}
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 bg-[#182032] hover:bg-[#1e283d] text-slate-200 border border-slate-700/80 rounded-xl font-bold text-xs transition-all shadow-md active:scale-[0.99] cursor-pointer group"
+            className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/[0.1] hover:bg-white/[0.18] text-white border border-white/25 hover:border-white/40 rounded-xl font-bold text-xs transition-all shadow-[0_4px_16px_rgba(0,0,0,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] active:scale-[0.99] cursor-pointer group"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
               <path
                 fill="#4285F4"
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -352,61 +415,69 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
 
           {/* Divider */}
-          <div className="flex items-center gap-3 text-slate-500 text-[11px]">
-            <div className="flex-1 h-px bg-slate-800" />
-            <span>or continue with email</span>
-            <div className="flex-1 h-px bg-slate-800" />
+          <div className="flex items-center gap-3 text-slate-300 text-[11px] font-mono">
+            <div className="flex-1 h-px bg-white/15" />
+            <span>or use email credentials</span>
+            <div className="flex-1 h-px bg-white/15" />
           </div>
 
           {/* Error notice */}
           {errorMessage && (
-            <div className="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-medium">
-              {errorMessage}
+            <div className="p-3 rounded-xl bg-rose-500/25 border border-rose-500/50 text-rose-200 text-xs font-medium flex items-center gap-2 shadow-md">
+              <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {sponsorNotice && (
+            <div className="p-3 rounded-xl bg-emerald-500/25 border border-emerald-500/50 text-emerald-200 text-xs font-medium flex items-center gap-2 shadow-md">
+              <Sparkles className="w-4 h-4 text-emerald-300 shrink-0" />
+              <span>{sponsorNotice}</span>
             </div>
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             {mode === 'register' && (
               <>
                 {/* Full Name */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
-                    Full Name
+                  <label className="block text-[11px] font-extrabold text-slate-200 uppercase tracking-wider mb-1">
+                    Trader Full Name
                   </label>
                   <div className="relative">
-                    <User className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                    <User className="w-4 h-4 absolute left-3.5 top-3 text-slate-300" />
                     <input
                       id="register-fullname-input"
                       type="text"
                       placeholder="e.g. Johirul Islam"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      className="w-full bg-[#151c2c] border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                      className="w-full bg-white/[0.08] hover:bg-white/[0.12] focus:bg-white/[0.16] border border-white/25 focus:border-amber-300 rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 transition-all font-sans shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)]"
                     />
                   </div>
                 </div>
 
                 {/* Country Selection */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
-                    Residence Country
+                  <label className="block text-[11px] font-extrabold text-slate-200 uppercase tracking-wider mb-1">
+                    Country of Residence
                   </label>
                   <div className="relative">
-                    <Globe className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                    <Globe className="w-4 h-4 absolute left-3.5 top-3 text-slate-300" />
                     <select
                       id="register-country-select"
                       value={selectedCountry}
                       onChange={(e) => setSelectedCountry(e.target.value)}
-                      className="w-full bg-[#151c2c] border border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-100 focus:outline-none focus:border-amber-400 transition-colors cursor-pointer appearance-none"
+                      className="w-full bg-[#111728] border border-white/25 focus:border-amber-400 rounded-xl pl-10 pr-8 py-2.5 text-xs sm:text-sm text-white focus:outline-none transition-colors cursor-pointer appearance-none shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)]"
                     >
                       {COUNTRIES.map((c) => (
-                        <option key={c.code} value={c.code} className="bg-[#151c2c] text-slate-100">
+                        <option key={c.code} value={c.code} className="bg-[#111728] text-white">
                           {c.flag} {c.name} ({c.currency})
                         </option>
                       ))}
                     </select>
-                    <div className="absolute right-3 top-3 pointer-events-none text-slate-400 text-xs">
+                    <div className="absolute right-3.5 top-3.5 pointer-events-none text-slate-400 text-xs">
                       ▼
                     </div>
                   </div>
@@ -414,124 +485,151 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </>
             )}
 
-            {/* Email */}
+            {/* Email Address */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
+              <label className="block text-[11px] font-extrabold text-slate-200 uppercase tracking-wider mb-1">
                 Email Address
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-300" />
                 <input
                   id="auth-email-input"
                   type="email"
-                  placeholder="name@example.com"
+                  placeholder="trader@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-[#151c2c] border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                  className="w-full bg-white/[0.08] hover:bg-white/[0.12] focus:bg-white/[0.16] border border-white/25 focus:border-amber-300 rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 transition-all font-sans shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)]"
                 />
               </div>
             </div>
 
             {/* Password */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
-                Password
+              <label className="block text-[11px] font-extrabold text-slate-200 uppercase tracking-wider mb-1">
+                Security Password
               </label>
               <div className="relative">
-                <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-300" />
                 <input
                   id="auth-password-input"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
+                  placeholder="Min 6 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-[#151c2c] border border-slate-700/80 rounded-xl pl-9 pr-10 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                  className="w-full bg-white/[0.08] hover:bg-white/[0.12] focus:bg-white/[0.16] border border-white/25 focus:border-amber-300 rounded-xl pl-10 pr-10 py-2.5 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 transition-all font-sans shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)]"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-200 cursor-pointer"
+                  className="absolute right-3.5 top-3 text-slate-400 hover:text-white cursor-pointer"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Terms checkbox for register */}
+            {/* Optional Sponsor Referral Code in 3D White Glass Card */}
             {mode === 'register' && (
-              <label className="flex items-start gap-2 pt-1 text-[11px] text-slate-400 cursor-pointer">
+              <div className="p-3.5 rounded-2xl bg-white/[0.07] backdrop-blur-md border border-amber-400/50 shadow-[0_4px_16px_rgba(245,158,11,0.15)]">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-extrabold text-amber-300 flex items-center gap-1.5">
+                    <Gift className="w-4 h-4 text-amber-400" />
+                    <span>Sponsor Referral Code (Optional)</span>
+                  </label>
+                  <span className="text-[10px] font-mono font-black text-amber-400 bg-amber-400/20 px-2 py-0.5 rounded-full border border-amber-400/40">
+                    +$10 Bonus
+                  </span>
+                </div>
+                <input
+                  id="register-referral-code-input"
+                  type="text"
+                  placeholder="e.g. CB67022 (Get $10 bonus)"
+                  value={sponsorCodeInput}
+                  onChange={(e) => setSponsorCodeInput(e.target.value.toUpperCase().replace(/[^A-Za-z0-9]/g, ''))}
+                  className="w-full bg-white/[0.08] border border-amber-400/60 focus:border-amber-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-amber-200 placeholder-slate-400 uppercase tracking-wider focus:outline-none shadow-inner"
+                />
+                <p className="text-[10px] text-slate-300 mt-1.5">
+                  Activate sponsor code to get an instant <strong className="text-amber-300">$10.00</strong> added to your referral balance!
+                </p>
+              </div>
+            )}
+
+            {/* Terms checkbox */}
+            {mode === 'register' && (
+              <label className="flex items-start gap-2 pt-1 text-[11px] text-slate-300 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={agreeTerms}
                   onChange={(e) => setAgreeTerms(e.target.checked)}
-                  className="mt-0.5 rounded bg-slate-800 border-slate-700 text-amber-500 focus:ring-amber-400"
+                  className="mt-0.5 rounded bg-slate-800 border-white/30 text-amber-500 focus:ring-amber-400 cursor-pointer"
                 />
                 <span>
-                  I confirm that I am 18+ years old and accept the{' '}
-                  <span className="text-amber-400 hover:underline">User Agreement</span> and{' '}
+                  I certify that I am 18+ years old and accept the{' '}
+                  <span className="text-amber-400 hover:underline">Financial Agreement</span> and{' '}
                   <span className="text-amber-400 hover:underline">Risk Disclosure</span>.
                 </span>
               </label>
             )}
 
-            {/* Submit Button */}
+            {/* High-Conversion 3D Submit Button */}
             <button
               id="auth-submit-btn"
               type="submit"
               disabled={isLoading}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 active:scale-[0.99] text-slate-950 font-black text-sm shadow-[0_4px_20px_rgba(16,185,129,0.35)] transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
+              className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 hover:from-amber-300 hover:to-yellow-200 active:scale-[0.99] text-slate-950 font-black text-sm shadow-[0_8px_30px_rgba(245,158,11,0.5),inset_0_1px_2px_rgba(255,255,255,0.8)] transition-all cursor-pointer flex items-center justify-center gap-2 mt-2 group transform-gpu hover:scale-[1.01]"
             >
               {isLoading ? (
                 <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>{mode === 'register' ? 'Open Account & Trade' : 'Enter Trading Room'}</span>
-                  <ArrowRight className="w-4 h-4 stroke-[3]" />
+                  <Sparkles className="w-4 h-4 text-slate-950" />
+                  <span>{mode === 'register' ? 'Create Real Account & Start Trading' : 'Sign In to Trading Terminal'}</span>
+                  <ArrowRight className="w-4 h-4 stroke-[3] transition-transform group-hover:translate-x-1" />
                 </>
               )}
             </button>
           </form>
 
           {/* Quick Demo Practice Shortcut */}
-          <div className="pt-2 border-t border-slate-800/80 text-center">
+          <div className="pt-2 border-t border-white/15 text-center">
             <button
               id="quick-demo-access-btn"
               type="button"
               onClick={handleQuickDemoAccess}
-              className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center justify-center gap-1.5 mx-auto py-1 cursor-pointer"
+              className="text-xs font-bold text-slate-200 hover:text-white flex items-center justify-center gap-2 mx-auto py-1 cursor-pointer transition-colors"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Or Start Instantly with $10,000 Practice Demo</span>
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Or Explore Instantly with <strong>$10,000 Demo Practice</strong></span>
             </button>
           </div>
 
-          {/* Trust Highlights inside Modal */}
-          <div className="p-3 bg-[#131926] border border-slate-800 rounded-xl space-y-1.5 text-[11px] text-slate-400">
+          {/* 3D White Glass Trust Badges Strip with Trading Symbols */}
+          <div className="p-3.5 bg-white/[0.06] backdrop-blur-md border border-white/20 rounded-2xl space-y-2 text-[11px] text-slate-200 shadow-sm">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 font-black text-[10px] flex items-center justify-center">₿</span>
               <span>
-                <strong>Low Minimum Entry:</strong> Trade from just <strong>$0.50</strong> (50 cents)
+                <strong>Micro-Lot Trading:</strong> Trade with as little as <strong>$0.50 (50¢)</strong>
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="w-4 h-4 rounded-full bg-emerald-400/20 text-emerald-400 font-black text-[10px] flex items-center justify-center">₮</span>
               <span>
-                <strong>Binance Cloud Data:</strong> 100% real-time synchronized candlestick charts
+                <strong>Referral Partner 20%:</strong> Auto 20% on referred losses, 20% deduction on wins
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="w-4 h-4 rounded-full bg-sky-400/20 text-sky-400 font-black text-[10px] flex items-center justify-center">Ξ</span>
               <span>
-                <strong>Instant Payouts:</strong> Automated Binance Pay & USDT TRC20 withdrawals
+                <strong>Instant Binance Pay:</strong> Zero deposit & withdrawal processing fees
               </span>
             </div>
           </div>
         </div>
 
         {/* Modal Footer Security Badge */}
-        <div className="p-2.5 bg-[#0a0e16] border-t border-slate-800/80 text-center text-[10px] text-slate-500 flex items-center justify-center gap-1.5 shrink-0">
+        <div className="p-3 bg-black/50 border-t border-white/15 text-center text-[10px] text-slate-300 flex items-center justify-center gap-2 shrink-0">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-          <span>SSL 256-bit Encrypted • Authentic Binance Liquidity Partner</span>
+          <span>SSL 256-Bit Financial Encryption • 100% Direct Binance WebSocket Liquidity</span>
         </div>
       </div>
     </div>

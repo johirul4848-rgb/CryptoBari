@@ -37,6 +37,7 @@ import { AdminAuthModal } from './components/admin/AdminAuthModal';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { ProfileModal } from './components/profile/ProfileModal';
 import { ReferralPage } from './components/referral/ReferralPage';
+import { referralService } from './services/referralService';
 import { PlatformOverview } from './components/common/PlatformOverview';
 import { HomePage } from './components/home/HomePage';
 import { AuthModal } from './components/auth/AuthModal';
@@ -53,7 +54,7 @@ const DEFAULT_SYMBOL: MarketSymbol = initialLiveList[0];
 export const App: React.FC = () => {
   // Authentication & Guest State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('quotex_authenticated') === 'true';
+    return localStorage.getItem('cb_authenticated') === 'true' || localStorage.getItem('quotex_authenticated') === 'true';
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('register');
@@ -278,6 +279,10 @@ export const App: React.FC = () => {
                 sound.playLoss();
               }
               setSettledTradeToast(nowSettled);
+              // Automatic Referral Commission: 20% on loss, 20% reduced on win
+              if (nowSettled.result === 'WIN' || nowSettled.result === 'LOSS') {
+                referralService.processTradeCommission(nowSettled.investment, nowSettled.result as 'WIN' | 'LOSS');
+              }
               // Update wallet
               apiService.fetchWallet().then(w => {
                 if (w) setWallet(w);
@@ -464,6 +469,7 @@ export const App: React.FC = () => {
       console.warn('Firebase signout error:', e);
     }
     setIsAuthenticated(false);
+    localStorage.removeItem('cb_authenticated');
     localStorage.removeItem('quotex_authenticated');
     setCurrentTab('trade');
   };
@@ -471,7 +477,7 @@ export const App: React.FC = () => {
   const handleAuthSuccess = (userData: { name: string; email: string; country: string }) => {
     sound.playWin();
     setIsAuthenticated(true);
-    localStorage.setItem('quotex_authenticated', 'true');
+    localStorage.setItem('cb_authenticated', 'true');
     if (userData.name) {
       setProfile(prev => ({
         ...prev,

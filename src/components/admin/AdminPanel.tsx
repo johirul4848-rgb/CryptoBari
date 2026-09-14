@@ -32,9 +32,21 @@ import {
   Check,
   Copy,
   Zap,
+  Sparkles,
+  Award,
+  Edit3,
+  Key,
 } from 'lucide-react';
 import { MarketSymbol } from '../../types';
 import { sound } from '../../utils/audio';
+import {
+  influencerService,
+  InfluencerProfile,
+  InfluencerWithdrawalRequest,
+  generateShortUserId,
+  generateShortPassword,
+  generateShortPromoCode,
+} from '../../services/influencerService';
 
 export interface OtcPairItem {
   id: string;
@@ -61,6 +73,12 @@ interface DepositItem {
   method: string;
   txHash: string;
   binanceId?: string;
+  promoCode?: string;
+  bonusPercent?: number;
+  bonusAmount?: number;
+  totalCredited?: number;
+  influencerId?: string;
+  influencerCommission?: number;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: number;
   approvedAt?: number;
@@ -126,15 +144,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentLiveBalance,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'deposits' | 'withdrawals' | 'otc' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets' | 'gateway' | 'support'
+    'dashboard' | 'deposits' | 'withdrawals' | 'finance' | 'users' | 'notices' | 'referrals' | 'reports' | 'assets' | 'gateway' | 'support' | 'influencers'
   >('dashboard');
 
-  // OTC Synthetic Pairs state (Quotex style, up to 93% payout)
-  const [otcPairs, setOtcPairs] = useState<OtcPairItem[]>([]);
-  const [defaultOtcPayout, setDefaultOtcPayout] = useState<number>(93);
-  const [otcCategoryFilter, setOtcCategoryFilter] = useState<'ALL' | 'Forex' | 'Crypto' | 'Commodity' | 'Index'>('ALL');
-  const [otcSearch, setOtcSearch] = useState('');
-  const [isSavingDefaultPayout, setIsSavingDefaultPayout] = useState(false);
+  // Influencer Promotion Program state
+  const [influencers, setInfluencers] = useState<InfluencerProfile[]>([]);
+  const [influencerWithdrawals, setInfluencerWithdrawals] = useState<InfluencerWithdrawalRequest[]>([]);
+  const [influencerFilter, setInfluencerFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('PENDING');
+  const [influencerSearch, setInfluencerSearch] = useState('');
+  const [isNewInfluencerModalOpen, setIsNewInfluencerModalOpen] = useState(false);
+  const [newInfName, setNewInfName] = useState('');
+  const [newInfEmail, setNewInfEmail] = useState('');
+  const [newInfCountry, setNewInfCountry] = useState('🇧🇩 Bangladesh');
+  const [newInfBinanceId, setNewInfBinanceId] = useState('');
+  const [newInfCustomPromo, setNewInfCustomPromo] = useState('');
+  const [editingInfluencer, setEditingInfluencer] = useState<InfluencerProfile | null>(null);
+  const [editBinanceId, setEditBinanceId] = useState('');
+  const [createdPassCardData, setCreatedPassCardData] = useState<InfluencerProfile | null>(null);
 
   // Live state fetched from server
   const [deposits, setDeposits] = useState<DepositItem[]>([]);
@@ -187,7 +213,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
-      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes, otcRes] = await Promise.all([
+      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes, infRes, infWithRes] = await Promise.all([
         fetch('/api/admin/deposits').then(r => r.json()).catch(() => []),
         fetch('/api/admin/withdrawals').then(r => r.json()).catch(() => []),
         fetch('/api/admin/notices').then(r => r.json()).catch(() => []),
@@ -197,24 +223,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fetch('/api/admin/reports').then(r => r.json()).catch(() => ({ allTrades: [] })),
         fetch('/api/payment/binance-settings').then(r => r.json()).catch(() => null),
         fetch('/api/support/tickets').then(r => r.json()).catch(() => []),
-        fetch('/api/admin/otc/pairs').then(r => r.json()).catch(() => null),
+        fetch('/api/admin/influencers').then(r => r.json()).catch(() => null),
+        fetch('/api/admin/influencer-withdrawals').then(r => r.json()).catch(() => null),
       ]);
 
       if (Array.isArray(depRes)) setDeposits(depRes);
 
-      // Robustly merge backend withdrawals with any locally submitted withdrawals
+      // Load influencers (merge server & local service)
+      const localInfs = influencerService.getAllInfluencers();
+      const serverInfs = infRes && Array.isArray(infRes.influencers) ? infRes.influencers : (Array.isArray(infRes) ? infRes : []);
+      if (serverInfs.length > 0) {
+        setInfluencers(serverInfs);
+      } else {
+        setInfluencers(localInfs);
+      }
+
+      // Load influencer withdrawals
+      const localInfWiths = influencerService.getAllWithdrawals();
+      const serverInfWiths = infRes && Array.isArray(infRes.withdrawals) ? infRes.withdrawals : (Array.isArray(infWithRes) ? infWithRes : []);
+      if (serverInfWiths.length > 0) {
+        setInfluencerWithdrawals(serverInfWiths);
+      } else {
+        setInfluencerWithdrawals(localInfWiths);
+      }
+
+      // Robustly merge backend withdrawals with any locally submitted withdrawals (clearing previous mock data)
       let combinedWithdrawals: WithdrawalItem[] = Array.isArray(withRes) ? [...withRes] : [];
       try {
         const raw = localStorage.getItem('cb_admin_shared_withdrawals');
         if (raw) {
-          const localList: WithdrawalItem[] = JSON.parse(raw);
+          const parsed = JSON.parse(raw);
+          // Filter out legacy mock data IDs
+          const localList: WithdrawalItem[] = Array.isArray(parsed)
+            ? parsed.filter((w: any) => w.id !== 'WTH-92140' && w.id !== 'WTH-92135' && w.userId !== 'usr_marcus' && w.userId !== 'usr_amira')
+            : [];
+          localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(localList));
+
           const map = new Map<string, WithdrawalItem>();
           combinedWithdrawals.forEach((w) => map.set(w.id, w));
           localList.forEach((w) => {
             if (!map.has(w.id)) {
               map.set(w.id, w);
             } else {
-              // Merge any richer fields like binanceId
               const existing = map.get(w.id)!;
               map.set(w.id, {
                 ...existing,
@@ -247,12 +297,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           setSelectedTicketId(supRes[0].id);
         }
       }
-      if (otcRes && Array.isArray(otcRes.pairs)) {
-        setOtcPairs(otcRes.pairs);
-        if (typeof otcRes.defaultPayout === 'number') {
-          setDefaultOtcPayout(otcRes.defaultPayout);
-        }
-      }
     } catch {
       // ignore
     } finally {
@@ -267,9 +311,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       loadAdminData();
     };
 
+    const unsubInf = influencerService.subscribe(() => {
+      loadAdminData();
+    });
+
     window.addEventListener('cb_withdrawals_updated', handleWithdrawalUpdated);
     window.addEventListener('storage', handleWithdrawalUpdated);
     return () => {
+      unsubInf();
       window.removeEventListener('cb_withdrawals_updated', handleWithdrawalUpdated);
       window.removeEventListener('storage', handleWithdrawalUpdated);
     };
@@ -278,71 +327,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const showNotification = (msg: string) => {
     setActionSuccessMsg(msg);
     setTimeout(() => setActionSuccessMsg(null), 4000);
-  };
-
-  // OTC Pair Management Handlers (Quotex style, max 93% payout)
-  const handleUpdateDefaultOtcPayout = async (rate: number) => {
-    const capped = Math.min(93, Math.max(50, Math.round(rate)));
-    setIsSavingDefaultPayout(true);
-    sound.playClick();
-    try {
-      const res = await fetch('/api/admin/otc/default-payout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rate: capped }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setDefaultOtcPayout(data.defaultPayout || capped);
-        showNotification(`Global OTC default payout set to ${data.defaultPayout || capped}% (Max 93%)`);
-        sound.playWin();
-        loadAdminData();
-      }
-    } catch {
-      setDefaultOtcPayout(capped);
-      showNotification(`Default payout rate set to ${capped}%`);
-    } finally {
-      setIsSavingDefaultPayout(false);
-    }
-  };
-
-  const handleToggleOtcPair = async (pairId: string, currentEnabled: boolean) => {
-    sound.playClick();
-    const newStatus = currentEnabled ? 'PAUSED' : 'ACTIVE';
-    try {
-      const res = await fetch(`/api/admin/otc/pairs/${pairId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !currentEnabled, status: newStatus }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, enabled: !currentEnabled, status: newStatus } : p));
-        showNotification(`OTC Pair ${pairId} ${!currentEnabled ? 'enabled & active' : 'paused'}`);
-        sound.playWin();
-      }
-    } catch {
-      setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, enabled: !currentEnabled, status: newStatus } : p));
-    }
-  };
-
-  const handleUpdateOtcPairPayout = async (pairId: string, newPayout: number) => {
-    const capped = Math.min(93, Math.max(50, Math.round(newPayout)));
-    sound.playClick();
-    try {
-      const res = await fetch(`/api/admin/otc/pairs/${pairId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payoutRate: capped }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, payoutRate: capped } : p));
-        showNotification(`Payout for ${pairId} updated to ${capped}% (Max 93%)`);
-      }
-    } catch {
-      setOtcPairs(prev => prev.map(p => p.id === pairId ? { ...p, payoutRate: capped } : p));
-    }
   };
 
   // Save Binance Gateway Settings
@@ -427,9 +411,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         showNotification(data.message || `Deposit #${id} approved! Live balance credited.`);
         // Update local deposit list
         setDeposits(prev => prev.map(d => d.id === id ? { ...d, status: 'APPROVED', approvedAt: Date.now() } : d));
+        
+        // If deposit had an influencer promo code, credit 20% commission to influencer
+        const dep = deposits.find(d => d.id === id);
+        if (dep && dep.promoCode) {
+          influencerService.processDepositWithPromo({
+            depositId: dep.id,
+            traderName: dep.userName,
+            traderEmail: dep.userEmail,
+            depositAmount: dep.amount,
+            promoCode: dep.promoCode,
+          });
+        }
+
         // Inform parent app so live trading balance immediately jumps up
         if (onDepositApprovedNotification && data.liveBalance !== undefined) {
-          const dep = deposits.find(d => d.id === id);
           onDepositApprovedNotification(dep ? dep.amount : 0, data.liveBalance);
         }
         loadAdminData();
@@ -546,7 +542,73 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // 5. Create Notice
+  // 4b. Influencer Promotion Program Handlers
+  const handleApproveInfluencerWithdrawal = async (id: string) => {
+    sound.playClick();
+    try {
+      await fetch(`/api/admin/influencer-withdrawals/${id}/approve`, { method: 'POST' });
+    } catch {}
+    influencerService.adminApproveWithdrawal(id);
+    sound.playWin();
+    showNotification(`Influencer withdrawal #${id} approved! Marked as Paid via Binance Pay.`);
+    loadAdminData();
+  };
+
+  const handleRejectInfluencerWithdrawal = async (id: string) => {
+    sound.playClick();
+    const reason = window.prompt('Enter rejection reason for influencer:', 'Binance Pay ID unverified or account compliance check') || 'Verification failed';
+    try {
+      await fetch(`/api/admin/influencer-withdrawals/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+    } catch {}
+    influencerService.adminRejectWithdrawal(id, reason);
+    sound.playLoss();
+    showNotification(`Influencer withdrawal #${id} rejected and balance refunded.`);
+    loadAdminData();
+  };
+
+  const handleCreateNewInfluencer = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newInfName.trim() || !newInfEmail.trim() || !newInfBinanceId.trim()) return;
+
+    const res = influencerService.registerInfluencer({
+      name: newInfName.trim(),
+      email: newInfEmail.trim(),
+      country: newInfCountry,
+      binanceId: newInfBinanceId.trim(),
+      customPromoCode: newInfCustomPromo.trim() || undefined,
+    });
+
+    if (res.success && res.influencer) {
+      sound.playWin();
+      showNotification(`Influencer ${res.influencer.name} registered! Promo code: ${res.influencer.promoCode}`);
+      setCreatedPassCardData(res.influencer);
+      setNewInfName('');
+      setNewInfEmail('');
+      setNewInfBinanceId('');
+      setNewInfCustomPromo('');
+      setIsNewInfluencerModalOpen(false);
+      loadAdminData();
+    } else {
+      sound.playLoss();
+      showNotification(res.message);
+    }
+  };
+
+  const handleSaveEditInfluencer = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingInfluencer) return;
+    if (editBinanceId.trim()) {
+      influencerService.updateInfluencerBinanceId(editingInfluencer.id, editBinanceId.trim());
+    }
+    sound.playWin();
+    showNotification(`Influencer profile for ${editingInfluencer.name} updated!`);
+    setEditingInfluencer(null);
+    loadAdminData();
+  };
   const handleCreateNotice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoticeTitle || !newNoticeContent) return;
@@ -568,6 +630,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setNewNoticeTitle('');
         setNewNoticeContent('');
         setIsNoticeFormOpen(false);
+        // Broadcast to all accounts / open views
+        window.dispatchEvent(new CustomEvent('cb_notices_updated', { detail: data.notice }));
         loadAdminData();
       }
     } catch {
@@ -581,6 +645,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       await fetch(`/api/admin/notices/${id}`, { method: 'DELETE' });
       setNotices(prev => prev.filter(n => n.id !== id));
+      window.dispatchEvent(new CustomEvent('cb_notices_updated'));
       showNotification('Announcement removed');
     } catch {
       // ignore
@@ -810,6 +875,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     u.country.toLowerCase().includes(userSearch.toLowerCase())
   );
 
+  const pendingInfluencerWithdrawalsCount = influencerWithdrawals.filter(w => w.status === 'PENDING').length;
+  const totalInfluencerVolume = influencers.reduce((s, i) => s + (i.totalVolumeGenerated || 0), 0);
+  const totalInfluencerCommissionPaid = influencers.reduce((s, i) => s + (i.totalEarned || 0), 0);
+  const totalInfluencerAvailableBalance = influencers.reduce((s, i) => s + (i.availableBalance || 0), 0);
+
+  const filteredInfluencers = influencers.filter(i => {
+    if (!influencerSearch.trim()) return true;
+    const q = influencerSearch.toLowerCase().trim();
+    return (
+      i.name.toLowerCase().includes(q) ||
+      i.email.toLowerCase().includes(q) ||
+      i.promoCode.toLowerCase().includes(q) ||
+      i.binanceId.toLowerCase().includes(q) ||
+      i.userId.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredInfluencerWithdrawals = influencerWithdrawals.filter(w => {
+    if (influencerFilter === 'ALL') return true;
+    return w.status === influencerFilter;
+  });
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#070b14] text-slate-100 font-sans overflow-hidden select-none">
       {/* 1. TOP BROKER OPS BAR */}
@@ -963,24 +1050,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
 
             <button
-              id="admin-tab-otc"
-              onClick={() => setActiveTab('otc')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
-                activeTab === 'otc'
-                  ? 'bg-gradient-to-r from-amber-500/25 to-yellow-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <Zap className="w-4 h-4 text-amber-400 fill-amber-400/20" />
-                <span>OTC Market Engine</span>
-              </div>
-              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black tracking-tight">
-                93% Max
-              </span>
-            </button>
-
-            <button
               id="admin-tab-finance"
               onClick={() => setActiveTab('finance')}
               className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
@@ -1038,6 +1107,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <Share2 className="w-4 h-4 text-rose-400" />
                 <span>Referral Affiliates</span>
               </div>
+            </button>
+
+            <button
+              id="admin-tab-influencers"
+              onClick={() => setActiveTab('influencers')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold transition cursor-pointer ${
+                activeTab === 'influencers'
+                  ? 'bg-gradient-to-r from-amber-500/25 to-yellow-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>Influencer Promos (20%)</span>
+              </div>
+              {pendingInfluencerWithdrawalsCount > 0 ? (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] animate-pulse">
+                  {pendingInfluencerWithdrawalsCount}
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">
+                  {influencers.length}
+                </span>
+              )}
             </button>
 
             <button
@@ -1148,21 +1241,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192c] to-[#0d1322] border border-cyan-500/30 shadow-lg">
                   <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider block">Total Turnover Volume</span>
                   <div className="text-xl md:text-2xl font-black text-white font-mono mt-1">
-                    ${(financeData?.totalDeposits || 32450).toLocaleString()}
+                    ${(financeData?.totalDeposits ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-1 font-semibold">
                     <TrendingUp className="w-3.5 h-3.5" />
-                    <span>+14.8% this week</span>
+                    <span>Real-Time Audit</span>
                   </div>
                 </div>
 
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192c] to-[#0d1322] border border-emerald-500/30 shadow-lg">
                   <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">Platform Net House Margin</span>
                   <div className="text-xl md:text-2xl font-black text-emerald-400 font-mono mt-1">
-                    +${(financeData?.houseTradingProfit || 6420).toLocaleString()}
+                    {(financeData?.netProfitOrLoss ?? 0) >= 0 ? '+' : ''}${(financeData?.netProfitOrLoss ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Average payout: <span className="text-white font-mono font-bold">85.4%</span>
+                    Average payout: <span className="text-white font-mono font-bold">85.0%</span>
                   </div>
                 </div>
 
@@ -1179,10 +1272,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192c] to-[#0d1322] border border-purple-500/30 shadow-lg">
                   <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider block">Registered Traders</span>
                   <div className="text-xl md:text-2xl font-black text-white font-mono mt-1">
-                    {users.length + 1420} Traders
+                    {users.length} Traders
                   </div>
                   <div className="text-[11px] text-purple-300 mt-1 font-semibold">
-                    Global 38 Countries
+                    Live Verified Accounts
                   </div>
                 </div>
               </div>
@@ -1320,9 +1413,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <td className="p-3.5">
                               <div className="font-extrabold text-white">{item.userName}</div>
                               <div className="text-[11px] text-slate-400 font-mono">{item.userEmail}</div>
+                              {item.promoCode && (
+                                <div className="mt-1 flex items-center gap-1">
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                                    <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                                    <span>PROMO: {item.promoCode}</span>
+                                    {item.bonusPercent ? <span>(+{item.bonusPercent}%)</span> : null}
+                                  </span>
+                                </div>
+                              )}
                             </td>
                             <td className="p-3.5 font-mono font-black text-emerald-400 text-sm">
-                              ${item.amount.toFixed(2)}
+                              <div>${item.amount.toFixed(2)}</div>
+                              {item.bonusAmount ? (
+                                <div className="text-[10px] text-amber-400 font-normal mt-0.5">
+                                  +${item.bonusAmount.toFixed(2)} bonus (Total: ${(item.totalCredited || (item.amount + item.bonusAmount)).toFixed(2)})
+                                </div>
+                              ) : null}
                             </td>
                             <td className="p-3.5">
                               <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
@@ -1867,390 +1974,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* TAB: OTC SYNTHETIC MARKET ENGINE (Quotex Style, Max 93% Payout) */}
-          {activeTab === 'otc' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              {/* Header & Quick Action */}
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 flex items-center justify-center text-slate-950 shadow-lg shadow-amber-500/20">
-                      <Zap className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
-                    </div>
-                    <h2 className="text-xl md:text-2xl font-black text-white">
-                      CryptoBari OTC Synthetic Pairs Engine
-                    </h2>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Manage 24/7 OTC Synthetic market assets, continuous smooth price synthesis, and professional high payout returns (up to 93%).
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2.5">
-                  <div className="px-3.5 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs rounded-xl flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>10 Curated Authentic Pairs (5 Live + 5 OTC)</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 2 Operations Cards: Global Payout Controller & OTC Engine Status */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Global Payout Controller */}
-                <div className="p-5 rounded-2xl bg-gradient-to-br from-[#121a2d] to-[#0c1220] border border-amber-500/40 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 fill-amber-400" />
-                        <span>Global Default OTC Payout</span>
-                      </div>
-                      <span className="text-[11px] text-slate-400">Default rate applied to newly created OTC synthetic pairs</span>
-                    </div>
-                    <div className="px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-xs">
-                      Max: 93%
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-300 mb-1.5">
-                        <span>Current Default:</span>
-                        <span className="text-amber-400 text-lg font-black">{defaultOtcPayout}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="50"
-                        max="93"
-                        value={defaultOtcPayout}
-                        onChange={(e) => setDefaultOtcPayout(Number(e.target.value))}
-                        className="w-full accent-amber-400 cursor-pointer"
-                      />
-                    </div>
-
-                    <button
-                      id="btn-save-default-otc-payout"
-                      onClick={() => handleUpdateDefaultOtcPayout(defaultOtcPayout)}
-                      disabled={isSavingDefaultPayout}
-                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition active:scale-95 cursor-pointer disabled:opacity-50"
-                    >
-                      {isSavingDefaultPayout ? 'Saving...' : 'Apply Default'}
-                    </button>
-                  </div>
-
-                  {/* Preset quick buttons */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase">Quick Presets:</span>
-                    {[93, 90, 88, 85, 80].map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => handleUpdateDefaultOtcPayout(rate)}
-                        className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
-                          defaultOtcPayout === rate
-                            ? 'bg-amber-400 text-slate-950'
-                            : 'bg-[#090e1a] border border-slate-700 text-slate-300 hover:border-amber-400 hover:text-white'
-                        }`}
-                      >
-                        {rate}%
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* OTC Engine Status & Algorithmic Guardrails */}
-                <div className="p-5 rounded-2xl bg-gradient-to-br from-[#101728] to-[#0a0f1d] border border-cyan-500/30 shadow-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4" />
-                      <span>OTC Engine Algorithmic Guardrails</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold">
-                      Online 24/7
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="p-2.5 rounded-xl bg-[#090e1a] border border-slate-800">
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Active OTC Pairs</div>
-                      <div className="text-white font-mono font-black text-sm mt-0.5">
-                        {otcPairs.filter((p) => p.enabled).length} / {otcPairs.length}
-                      </div>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-[#090e1a] border border-slate-800">
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Max Payout Cap</div>
-                      <div className="text-amber-400 font-mono font-black text-sm mt-0.5">
-                        93% (High Yield Standard)
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-[11px] text-slate-400 leading-relaxed bg-[#0b101c] p-2.5 rounded-xl border border-slate-800/80">
-                    ℹ️ <strong>Algorithmic Movement:</strong> Prices synthesized via continuous stochastic drift. No artificial periodic waves. Fully independent 24/7 OTC liquidity.
-                  </div>
-                </div>
-              </div>
-
-              {/* Category Filter Pills & Search */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#101626] rounded-xl border border-slate-800">
-                  {(['ALL', 'Forex', 'Crypto', 'Commodity', 'Index'] as const).map((cat) => {
-                    const count = cat === 'ALL' ? otcPairs.length : otcPairs.filter((p) => p.category === cat).length;
-                    return (
-                      <button
-                        key={cat}
-                        onClick={() => {
-                          sound.playClick();
-                          setOtcCategoryFilter(cat);
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                          otcCategoryFilter === cat
-                            ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <span>{cat === 'ALL' ? 'All OTC Pairs' : cat}</span>
-                        <span
-                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                            otcCategoryFilter === cat ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-400'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="relative min-w-[240px]">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={otcSearch}
-                    onChange={(e) => setOtcSearch(e.target.value)}
-                    placeholder="Filter by OTC symbol or name..."
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-[#0e1424] border border-slate-800 text-white placeholder:text-slate-500 text-xs focus:outline-none focus:border-amber-400 transition"
-                  />
-                  {otcSearch && (
-                    <button
-                      onClick={() => setOtcSearch('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* OTC Pairs List (Responsive Table on Desktop & Cards on Mobile) */}
-              <div className="rounded-2xl bg-[#0f1524] border border-slate-800 overflow-hidden shadow-2xl">
-                {/* Mobile Cards View */}
-                <div className="md:hidden divide-y divide-slate-800/80">
-                  {otcPairs
-                    .filter((p) => {
-                      if (otcCategoryFilter !== 'ALL' && p.category !== otcCategoryFilter) return false;
-                      if (otcSearch) {
-                        const q = otcSearch.toLowerCase();
-                        return p.symbol.toLowerCase().includes(q) || p.displayName.toLowerCase().includes(q);
-                      }
-                      return true;
-                    })
-                    .map((pair) => (
-                      <div key={`mob-otc-${pair.id}`} className="p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-extrabold text-white text-sm">{pair.displayName}</span>
-                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-[9px]">
-                                OTC
-                              </span>
-                            </div>
-                            <span className="text-[10px] text-slate-500 font-mono">{pair.symbol}</span>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                pair.enabled
-                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
-                              }`}
-                            >
-                              {pair.enabled ? 'ACTIVE' : 'PAUSED'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs bg-[#0b101c] p-2.5 rounded-xl border border-slate-800">
-                          <div>
-                            <div className="text-[10px] text-slate-500 font-bold uppercase">Category</div>
-                            <div className="text-cyan-400 font-bold">{pair.category} OTC</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[10px] text-slate-500 font-bold uppercase">Base Price</div>
-                            <div className="text-white font-mono font-bold">
-                              {pair.price ? pair.price.toFixed(pair.pricePrecision || 2) : '1.00'}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Payout Adjustment Controls */}
-                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
-                          <div>
-                            <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
-                              Trader Payout Rate:
-                            </div>
-                            <div className="text-base font-black text-amber-400 font-mono">{pair.payoutRate}%</div>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            {[93, 90, 85].map((rate) => (
-                              <button
-                                key={rate}
-                                onClick={() => handleUpdateOtcPairPayout(pair.id, rate)}
-                                className={`px-2 py-1 rounded text-xs font-mono font-bold transition cursor-pointer ${
-                                  pair.payoutRate === rate
-                                    ? 'bg-amber-400 text-slate-950'
-                                    : 'bg-slate-800 text-slate-300 hover:text-white'
-                                }`}
-                              >
-                                {rate}%
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="pt-1">
-                          <button
-                            onClick={() => handleToggleOtcPair(pair.id, pair.enabled)}
-                            className={`w-full py-2 px-3 rounded-xl font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                              pair.enabled
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
-                            }`}
-                          >
-                            <span>{pair.enabled ? 'Pause Trading' : 'Enable Trading'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-
-                {/* Desktop Table View */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[#151c30] text-slate-400 font-bold border-b border-slate-800">
-                      <tr>
-                        <th className="p-3.5">OTC Pair Asset</th>
-                        <th className="p-3.5">Category</th>
-                        <th className="p-3.5">Synthetic Price</th>
-                        <th className="p-3.5">Trader Payout Rate</th>
-                        <th className="p-3.5">Status</th>
-                        <th className="p-3.5 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/80">
-                      {otcPairs
-                        .filter((p) => {
-                          if (otcCategoryFilter !== 'ALL' && p.category !== otcCategoryFilter) return false;
-                          if (otcSearch) {
-                            const q = otcSearch.toLowerCase();
-                            return p.symbol.toLowerCase().includes(q) || p.displayName.toLowerCase().includes(q);
-                          }
-                          return true;
-                        })
-                        .map((pair) => (
-                          <tr key={`row-otc-${pair.id}`} className="hover:bg-slate-800/30 transition">
-                            {/* Pair Asset */}
-                            <td className="p-3.5">
-                              <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-xs font-mono">
-                                  OTC
-                                </div>
-                                <div>
-                                  <div className="font-extrabold text-white flex items-center gap-1.5">
-                                    <span>{pair.displayName}</span>
-                                    <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-mono font-bold">
-                                      OTC 24/7
-                                    </span>
-                                  </div>
-                                  <div className="text-[11px] text-slate-500 font-mono">{pair.symbol}</div>
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Category */}
-                            <td className="p-3.5">
-                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-cyan-300 border border-slate-700 text-[10px] font-bold">
-                                {pair.category} OTC
-                              </span>
-                            </td>
-
-                            {/* Base Price */}
-                            <td className="p-3.5 font-mono font-bold text-slate-300">
-                              {pair.price ? pair.price.toFixed(pair.pricePrecision || 2) : '1.00000'}
-                            </td>
-
-                            {/* Payout Rate with quick stepper */}
-                            <td className="p-3.5">
-                              <div className="inline-flex items-center gap-1.5 bg-[#0b101c] p-1 rounded-xl border border-slate-700">
-                                <span className="font-mono font-black text-amber-400 text-xs px-2">
-                                  {pair.payoutRate}%
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  {[93, 90, 85].map((rate) => (
-                                    <button
-                                      key={rate}
-                                      onClick={() => handleUpdateOtcPairPayout(pair.id, rate)}
-                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
-                                        pair.payoutRate === rate
-                                          ? 'bg-amber-400 text-slate-950'
-                                          : 'bg-slate-800 text-slate-400 hover:text-white'
-                                      }`}
-                                    >
-                                      {rate}%
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Status */}
-                            <td className="p-3.5">
-                              {pair.enabled ? (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold inline-flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                  <span>Active (24/7)</span>
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-bold">
-                                  Paused
-                                </span>
-                              )}
-                            </td>
-
-                            {/* Actions */}
-                            <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
-                              <button
-                                onClick={() => handleToggleOtcPair(pair.id, pair.enabled)}
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                                  pair.enabled
-                                    ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40'
-                                    : 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black'
-                                }`}
-                              >
-                                {pair.enabled ? 'Pause' : 'Activate'}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* TAB 4: FINANCE & P&L */}
           {activeTab === 'finance' && (
             <div className="space-y-6 max-w-6xl mx-auto">
@@ -2280,7 +2003,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <ArrowDownCircle className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-white font-mono mt-2">
-                    ${(financeData?.totalDeposits || 32450).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${(financeData?.totalDeposits ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Verified Inflow (USDT & Binance)</p>
                 </div>
@@ -2292,7 +2015,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <ArrowUpCircle className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-amber-300 font-mono mt-2">
-                    −${(financeData?.dispatchedPayouts || 21250).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    −${(financeData?.dispatchedPayouts ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Honored trader withdrawals</p>
                 </div>
@@ -2304,7 +2027,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-bold">Dep − Payout</span>
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-white font-mono mt-2">
-                    ${(financeData?.totalBalanceAmount || 11200).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${(financeData?.totalBalanceAmount ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Residual gross capital</p>
                 </div>
@@ -2316,7 +2039,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <Share2 className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-rose-300 font-mono mt-2">
-                    −${(financeData?.referralCommissions || 3450).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    −${(financeData?.referralCommissions ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Affiliate commission pay</p>
                 </div>
@@ -2342,7 +2065,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <div className={`text-xl sm:text-2xl font-black font-mono mt-2 ${
                     (financeData?.isProfit ?? true) ? 'text-emerald-400' : 'text-rose-400'
                   }`}>
-                    {(financeData?.isProfit ?? true) ? '+' : ''}${(financeData?.netProfitOrLoss || 7750).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {(financeData?.netProfitOrLoss ?? 0) >= 0 ? '+' : ''}${(financeData?.netProfitOrLoss ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Net profit after all deductions</p>
                 </div>
@@ -2374,48 +2097,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       {(financeData?.dailyReports || [
                         {
                           date: 'Today',
-                          deposits: 2850,
-                          dispatchedPayouts: 1420,
-                          netBalance: 1430,
-                          referralCommission: 140,
-                          netProfitLoss: 1290,
-                          status: 'PROFIT'
-                        },
-                        {
-                          date: 'Yesterday',
-                          deposits: 3100,
-                          dispatchedPayouts: 1750,
-                          netBalance: 1350,
-                          referralCommission: 165,
-                          netProfitLoss: 1185,
-                          status: 'PROFIT'
-                        },
-                        {
-                          date: '3 Days Ago',
-                          deposits: 4200,
-                          dispatchedPayouts: 2100,
-                          netBalance: 2100,
-                          referralCommission: 240,
-                          netProfitLoss: 1860,
-                          status: 'PROFIT'
-                        },
-                        {
-                          date: '4 Days Ago',
-                          deposits: 1950,
-                          dispatchedPayouts: 1200,
-                          netBalance: 750,
-                          referralCommission: 95,
-                          netProfitLoss: 655,
-                          status: 'PROFIT'
-                        },
-                        {
-                          date: '5 Days Ago',
-                          deposits: 3600,
-                          dispatchedPayouts: 1900,
-                          netBalance: 1700,
-                          referralCommission: 190,
-                          netProfitLoss: 1510,
-                          status: 'PROFIT'
+                          deposits: financeData?.totalDeposits ?? 0,
+                          dispatchedPayouts: financeData?.dispatchedPayouts ?? 0,
+                          netBalance: financeData?.totalBalanceAmount ?? 0,
+                          referralCommission: financeData?.referralCommissions ?? 0,
+                          netProfitLoss: financeData?.netProfitOrLoss ?? 0,
+                          status: (financeData?.isProfit ?? true) ? 'PROFIT' : 'LOSS',
                         },
                       ]).map((row: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition">
@@ -2467,10 +2154,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div>
                       <div className="flex justify-between font-bold mb-1">
                         <span className="text-slate-400">Binance Partner Custody Reserve</span>
-                        <span className="text-emerald-400 font-mono font-bold">$156,420.00</span>
+                        <span className="text-emerald-400 font-mono font-bold">${((financeData?.totalBalanceAmount ?? 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: '88%' }} />
+                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: '100%' }} />
                       </div>
                     </div>
                   </div>
@@ -3557,6 +3244,572 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <span>Select an inquiry from the left to view and answer trader messages.</span>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: INFLUENCER PROMOTION PROGRAM */}
+          {activeTab === 'influencers' && (
+            <div className="space-y-6 max-w-6xl mx-auto animate-in fade-in duration-200">
+              {/* Header & Actions */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-gradient-to-tr from-amber-500/20 to-yellow-500/20 border border-amber-500/30 text-amber-400">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        <span>Influencer Promotion Program</span>
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono font-bold">
+                          20% Commission
+                        </span>
+                      </h2>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Manage registered influencers, promotional deposit bonus codes, track referred deposit volume, and approve Binance Pay payouts.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <div className="relative w-full sm:w-60">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search influencer / promo..."
+                      value={influencerSearch}
+                      onChange={(e) => setInfluencerSearch(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2 bg-[#101626] border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    id="btn-register-influencer"
+                    onClick={() => {
+                      sound.playClick();
+                      setIsNewInfluencerModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition active:scale-95 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Register Influencer</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Created Credentials Banner Modal */}
+              {createdPassCardData && (
+                <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-[#1a1710] to-[#121624] border-2 border-amber-500/60 shadow-[0_0_25px_rgba(245,158,11,0.2)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-amber-300 font-black text-sm">
+                      <Award className="w-5 h-5 text-amber-400" />
+                      <span>New Influencer Access Credentials Generated</span>
+                    </div>
+                    <button
+                      onClick={() => setCreatedPassCardData(null)}
+                      className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-slate-800 cursor-pointer"
+                    >
+                      ✕ Dismiss
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Share these login credentials with <strong className="text-white">{createdPassCardData.name}</strong> so they can log into their Influencer Dashboard at the top right of the platform:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 bg-black/50 rounded-xl border border-amber-500/30">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Portal User ID</div>
+                      <div className="text-sm font-mono font-black text-amber-300 mt-0.5">{createdPassCardData.userId}</div>
+                    </div>
+                    <div className="p-3 bg-black/50 rounded-xl border border-amber-500/30">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Portal Password</div>
+                      <div className="text-sm font-mono font-black text-emerald-400 mt-0.5">{createdPassCardData.password}</div>
+                    </div>
+                    <div className="p-3 bg-black/50 rounded-xl border border-amber-500/30">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Trader Promo Code</div>
+                      <div className="text-sm font-mono font-black text-cyan-300 mt-0.5">{createdPassCardData.promoCode}</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => {
+                        const info = `CryptoBari Influencer Credentials\nName: ${createdPassCardData.name}\nUser ID: ${createdPassCardData.userId}\nPassword: ${createdPassCardData.password}\nPromo Code: ${createdPassCardData.promoCode}\nCommission: 20% per deposit\nTrader Bonus: $30-$49 (30%), $50-$69 (40%), $70+ (60%)`;
+                        navigator.clipboard.writeText(info);
+                        sound.playClick();
+                        showNotification('Credentials copied to clipboard!');
+                      }}
+                      className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Full Credentials to Clipboard</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Registration Modal / Card */}
+              {isNewInfluencerModalOpen && (
+                <form
+                  onSubmit={handleCreateNewInfluencer}
+                  className="p-5 rounded-2xl bg-gradient-to-br from-[#1c1810] to-[#101422] border border-amber-500/50 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-sm text-white">Register Influencer Account</h3>
+                        <p className="text-[11px] text-slate-400">Generates 20% commission tier and custom deposit promotion code.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsNewInfluencerModalOpen(false)}
+                      className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-slate-800 cursor-pointer"
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 text-xs">
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Full Name</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Masud Tech"
+                        value={newInfName}
+                        onChange={(e) => setNewInfName(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="e.g. masud@creator.com"
+                        value={newInfEmail}
+                        onChange={(e) => setNewInfEmail(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Receiver Binance Pay ID</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. 794380283"
+                        value={newInfBinanceId}
+                        onChange={(e) => setNewInfBinanceId(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Country</label>
+                      <input
+                        type="text"
+                        value={newInfCountry}
+                        onChange={(e) => setNewInfCountry(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-slate-300 font-bold mb-1">Custom Promo Code (Optional - leave blank for auto VIP code)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. MASUDVIP, CRYPTOPRO, etc."
+                        value={newInfCustomPromo}
+                        onChange={(e) => setNewInfCustomPromo(e.target.value.toUpperCase())}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white font-mono uppercase focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setIsNewInfluencerModalOpen(false)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl shadow cursor-pointer"
+                    >
+                      Create & Issue Credentials
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Edit Influencer Modal */}
+              {editingInfluencer && (
+                <form
+                  onSubmit={handleSaveEditInfluencer}
+                  className="p-5 rounded-2xl bg-gradient-to-br from-[#181d2e] to-[#0f1422] border border-cyan-500/50 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Edit3 className="w-5 h-5 text-cyan-400" />
+                      <h3 className="font-extrabold text-sm text-white">Edit Influencer: {editingInfluencer.name}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingInfluencer(null)}
+                      className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-slate-800 cursor-pointer"
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Promo Code (Permanent)</label>
+                      <input
+                        type="text"
+                        disabled
+                        value={editingInfluencer.promoCode}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-400 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">Receiver Binance Pay ID</label>
+                      <input
+                        type="text"
+                        required
+                        value={editBinanceId}
+                        onChange={(e) => setEditBinanceId(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#0a0f1d] border border-slate-700 rounded-xl text-white font-mono focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setEditingInfluencer(null)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs rounded-xl shadow cursor-pointer"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* 4 Overview Bento Metric Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-[#0f1524] border border-slate-800/80 shadow-md">
+                  <div className="flex items-center justify-between text-slate-400 text-xs font-semibold mb-2">
+                    <span>Active Influencers</span>
+                    <Users className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div className="text-2xl font-black text-white font-mono">{influencers.length}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">20% commission affiliates</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-[#0f1524] border border-slate-800/80 shadow-md">
+                  <div className="flex items-center justify-between text-slate-400 text-xs font-semibold mb-2">
+                    <span>Deposit Volume Driven</span>
+                    <TrendingUp className="w-4 h-4 text-emerald-400" />
+                  </div>
+                  <div className="text-2xl font-black text-emerald-400 font-mono">
+                    ${totalInfluencerVolume.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">Total trader deposits via promos</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-[#0f1524] border border-slate-800/80 shadow-md">
+                  <div className="flex items-center justify-between text-slate-400 text-xs font-semibold mb-2">
+                    <span>20% Commission Generated</span>
+                    <DollarSign className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div className="text-2xl font-black text-amber-300 font-mono">
+                    ${totalInfluencerCommissionPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">Auto credited on every deposit</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-[#0f1524] border border-slate-800/80 shadow-md">
+                  <div className="flex items-center justify-between text-slate-400 text-xs font-semibold mb-2">
+                    <span>Pending Payout Requests</span>
+                    <Clock className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div className="text-2xl font-black text-rose-400 font-mono">
+                    {pendingInfluencerWithdrawalsCount}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    ${influencerWithdrawals.filter(w => w.status === 'PENDING').reduce((s, w) => s + (w.amount || 0), 0).toFixed(2)} pending via Binance Pay
+                  </div>
+                </div>
+              </div>
+
+              {/* Tiered Bonus Policy Spotlight Banner */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-[#171b29] to-[#121828] border border-slate-800 text-xs">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <div className="font-extrabold text-white flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Promotion Bonus Engine (User Specifications)</span>
+                    </div>
+                    <div className="text-slate-400 text-[11px] mt-0.5">
+                      Traders entering an Influencer Promo Code receive instant Trading Bonus on deposits of $30+.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold text-[11px]">
+                      $30 - $49: +30% Bonus
+                    </div>
+                    <div className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-mono font-bold text-[11px]">
+                      $50 - $69: +40% Bonus
+                    </div>
+                    <div className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono font-bold text-[11px]">
+                      $70+: +60% Bonus
+                    </div>
+                    <div className="px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 font-mono font-bold text-[11px]">
+                      Influencer: 20% Cash Cut
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 1: Pending Influencer Withdrawal Requests */}
+              <div className="bg-[#0f1524] border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ArrowUpCircle className="w-5 h-5 text-amber-400" />
+                    <h3 className="font-black text-sm text-white">
+                      Influencer Payout Requests ({influencerWithdrawals.length})
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-1.5 p-1 bg-[#151c2e] rounded-xl border border-slate-800">
+                    {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setInfluencerFilter(f)}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          influencerFilter === f
+                            ? 'bg-amber-500 text-slate-950 shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {f === 'ALL' ? 'All' : f.charAt(0) + f.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#151c30] text-slate-400 font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3.5">Payout ID</th>
+                        <th className="p-3.5">Influencer</th>
+                        <th className="p-3.5">Amount</th>
+                        <th className="p-3.5">Binance Pay ID (UID)</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5 text-right">Admin Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {filteredInfluencerWithdrawals.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-slate-500">
+                            No influencer withdrawal requests matching filter.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredInfluencerWithdrawals.map((w) => {
+                          const isCopied = copiedWithdrawalBinanceId === w.id;
+                          return (
+                            <tr key={w.id} className="hover:bg-slate-800/40 transition">
+                              <td className="p-3.5 font-mono text-amber-400 font-bold">
+                                {w.id}
+                              </td>
+                              <td className="p-3.5">
+                                <div className="font-extrabold text-white">{w.influencerName}</div>
+                                <div className="text-[11px] text-slate-400 font-mono">{w.userId}</div>
+                              </td>
+                              <td className="p-3.5 font-mono font-black text-emerald-400 text-sm">
+                                ${w.amount.toFixed(2)}
+                              </td>
+                              <td className="p-3.5">
+                                <div className="inline-flex items-center gap-2 p-1.5 pr-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 group hover:border-amber-400 transition">
+                                  <div className="w-6 h-6 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+                                    <span className="font-black text-[9px] text-amber-400">UID</span>
+                                  </div>
+                                  <span className="font-mono font-black text-amber-300 text-xs tracking-wider select-all">
+                                    {w.binanceId}
+                                  </span>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(w.binanceId);
+                                      setCopiedWithdrawalBinanceId(w.id);
+                                      sound.playClick();
+                                      setTimeout(() => setCopiedWithdrawalBinanceId(null), 2000);
+                                    }}
+                                    className="p-1 rounded-md hover:bg-amber-500/20 text-amber-400 transition cursor-pointer"
+                                    title="Copy Binance ID"
+                                  >
+                                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="p-3.5">
+                                {w.status === 'PENDING' && (
+                                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold inline-flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    Pending Payout
+                                  </span>
+                                )}
+                                {w.status === 'APPROVED' && (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold inline-flex items-center gap-1">
+                                    <CheckCircle className="w-3 h-3" />
+                                    Paid via Binance Pay
+                                  </span>
+                                )}
+                                {w.status === 'REJECTED' && (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold inline-flex items-center gap-1">
+                                    <XCircle className="w-3 h-3" />
+                                    Rejected & Refunded
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
+                                {w.status === 'PENDING' ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleApproveInfluencerWithdrawal(w.id)}
+                                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black rounded-lg text-xs shadow transition active:scale-95 cursor-pointer inline-flex items-center gap-1"
+                                    >
+                                      <CheckCircle className="w-3.5 h-3.5" />
+                                      <span>Mark Paid</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleRejectInfluencerWithdrawal(w.id)}
+                                      className="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 font-bold rounded-lg text-xs border border-rose-600/40 transition active:scale-95 cursor-pointer inline-flex items-center gap-1"
+                                    >
+                                      <XCircle className="w-3.5 h-3.5" />
+                                      <span>Reject</span>
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-500 text-[11px] font-mono">Completed</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Section 2: Influencers Directory & Promo Codes */}
+              <div className="bg-[#0f1524] border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-5 h-5 text-yellow-400" />
+                    <h3 className="font-black text-sm text-white">
+                      Registered Influencers & Promotion Codes ({influencers.length})
+                    </h3>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#151c30] text-slate-400 font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3.5">Influencer</th>
+                        <th className="p-3.5">Promo Code</th>
+                        <th className="p-3.5">Portal Login ID</th>
+                        <th className="p-3.5">Binance Pay ID</th>
+                        <th className="p-3.5">Traders</th>
+                        <th className="p-3.5">Deposit Volume</th>
+                        <th className="p-3.5">20% Earned</th>
+                        <th className="p-3.5">Wallet Balance</th>
+                        <th className="p-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {filteredInfluencers.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-slate-500">
+                            No influencers found matching search.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredInfluencers.map((inf) => (
+                          <tr key={inf.id} className="hover:bg-slate-800/40 transition">
+                            <td className="p-3.5">
+                              <div className="font-extrabold text-white flex items-center gap-1.5">
+                                <span>{inf.name}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-normal">
+                                  {inf.country}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-mono">{inf.email}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <span className="px-2.5 py-1 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-xs inline-flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-amber-400" />
+                                {inf.promoCode}
+                              </span>
+                            </td>
+                            <td className="p-3.5 font-mono text-cyan-300 font-bold">
+                              {inf.userId}
+                            </td>
+                            <td className="p-3.5 font-mono text-slate-300">
+                              {inf.binanceId}
+                            </td>
+                            <td className="p-3.5 font-mono font-bold text-slate-200">
+                              {inf.referralCount || 0}
+                            </td>
+                            <td className="p-3.5 font-mono font-black text-emerald-400">
+                              ${(inf.totalVolumeGenerated || 0).toFixed(2)}
+                            </td>
+                            <td className="p-3.5 font-mono font-black text-amber-300">
+                              ${(inf.totalEarned || 0).toFixed(2)}
+                            </td>
+                            <td className="p-3.5 font-mono font-black text-cyan-400">
+                              ${(inf.availableBalance || 0).toFixed(2)}
+                            </td>
+                            <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                onClick={() => {
+                                  sound.playClick();
+                                  setCreatedPassCardData(inf);
+                                }}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs cursor-pointer inline-flex items-center gap-1"
+                                title="View Login Credentials"
+                              >
+                                <Key className="w-3 h-3 text-amber-400" />
+                                <span>Passcard</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  sound.playClick();
+                                  setEditingInfluencer(inf);
+                                  setEditBinanceId(inf.binanceId);
+                                }}
+                                className="px-2.5 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold rounded-lg text-xs border border-cyan-500/40 cursor-pointer inline-flex items-center gap-1"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>

@@ -122,7 +122,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   const [isTimeframeOpen, setIsTimeframeOpen] = useState(false);
   const [lastCandleTime, setLastCandleTime] = useState<number | undefined>(undefined);
 
-  // Drawing Tools (Horizontal Lines, Quotex style)
+  // Drawing Tools (Horizontal Lines, Support, Resistance)
   const [drawingTools, setDrawingTools] = useState<DrawingToolItem[]>([]);
 
   // Indicators State
@@ -865,7 +865,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   }, [symbol.symbol, symbol.isOtc, symbol.priceSource, chartType, onPriceUpdate]);
 
   // =========================================================================
-  // 3. QUOTEX STYLE ACTIVE TRADE ENTRY PRICE LINES
+  // 3. ACTIVE TRADE ENTRY PRICE LINES
   // =========================================================================
 
   useEffect(() => {
@@ -1039,7 +1039,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
             )}
           </div>
 
-          {/* Quotex-Style Unified Indicators & Drawing Tools Menu beside Timeframe */}
+          {/* Unified Indicators & Drawing Tools Menu beside Timeframe */}
           <IndicatorsAndToolsMenu
             currentPrice={livePrice}
             drawingTools={drawingTools}
@@ -1281,7 +1281,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
 
       {/* 2. MAIN CANVAS CONTAINER */}
       <div className="relative flex-1 w-full h-full min-h-[320px]">
-        {/* Quotex-Style Persistent Active Tools Floating Bar */}
+        {/* Persistent Active Tools Floating Bar in Left Corner */}
         <ActiveToolsFloatingBar
           drawingTools={drawingTools}
           indicators={indicators}
@@ -1297,7 +1297,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           }
         />
 
-        {/* Quotex Active Trade Markers, Running Candle Timer, and Draggable Horizontal Lines Overlay */}
+        {/* Active Trade Markers, Running Candle Timer, and Draggable Lines Overlay */}
         <TradeMarkersOverlay
           chart={chartRef.current}
           series={seriesRef.current}
