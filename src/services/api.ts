@@ -1,5 +1,6 @@
 import { MarketSymbol, CandleData, Trade, UserWallet, UserProfile, NotificationItem, SupportTicket, AdminStats, Timeframe } from '../types';
 import { binanceMarketData } from './binanceMarketData';
+import { tradingEngine } from './tradingEngine';
 
 // Default initial high-liquidity symbols until dynamic Binance exchangeInfo completes
 export const DEFAULT_SYMBOLS: MarketSymbol[] = [
@@ -273,7 +274,7 @@ export class ApiService {
     }
   }
 
-  // Place trade on backend (Authoritative)
+  // Place trade on backend (Authoritative) with tradingEngine resilience
   public async placeTrade(params: {
     symbol: string;
     displayPair: string;
@@ -282,80 +283,64 @@ export class ApiService {
     durationSeconds: number;
     accountMode: 'DEMO' | 'LIVE';
     currentPrice: number;
+    payoutRate?: number;
   }): Promise<{ success: boolean; trade?: Trade; message?: string }> {
     try {
-      const res = await fetch('/api/trades/place', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-
-      if (res.ok) {
-        return await res.json();
-      } else {
-        const error = await res.json();
-        return { success: false, message: error.message || 'Failed to place trade' };
-      }
-    } catch {
-      // If server route is in dev transition, execute client-authoritative demo trade fallback
-      const entryTimestamp = Date.now();
-      const expiryTimestamp = entryTimestamp + params.durationSeconds * 1000;
-      const payoutRate = 85;
-      const potentialPayout = params.investment * (1 + payoutRate / 100);
-
-      const demoTrade: Trade = {
-        id: 'CB-' + Math.random().toString(36).substring(2, 9).toUpperCase(),
-        userId: 'demo_user',
-        accountMode: params.accountMode,
+      const trade = await tradingEngine.placeTrade({
         symbol: params.symbol,
         displayPair: params.displayPair,
         direction: params.direction,
         investment: params.investment,
-        payoutRate,
-        potentialPayout,
-        entryPrice: params.currentPrice,
-        entryTimestamp,
-        expiryTimestamp,
         durationSeconds: params.durationSeconds,
-        result: 'PENDING',
-        profit: 0,
-        status: 'ACTIVE',
-        priceSource: {
-          provider: 'BINANCE',
-          market: 'SPOT',
-          symbol: params.symbol,
-        },
-        createdAt: entryTimestamp,
-      };
+        accountMode: params.accountMode,
+        payoutRate: params.payoutRate || 85,
+        currentPrice: params.currentPrice,
+      });
 
-      return { success: true, trade: demoTrade };
+      return { success: true, trade };
+    } catch (e: any) {
+      return { success: false, message: e?.message || 'Failed to place trade' };
     }
   }
 
   // Get active trades
   public async getActiveTrades(): Promise<Trade[]> {
+    const local = tradingEngine.getActiveTrades();
     try {
       const res = await fetch('/api/trades/active');
       if (res.ok) {
-        return await res.json();
+        const serverTrades: Trade[] = await res.json();
+        if (Array.isArray(serverTrades) && serverTrades.length > 0) {
+          const map = new Map<string, Trade>();
+          for (const t of local) map.set(t.id, t);
+          for (const t of serverTrades) map.set(t.id, t);
+          return Array.from(map.values());
+        }
       }
     } catch {
       //
     }
-    return [];
+    return local;
   }
 
   // Get trade history
   public async getTradeHistory(): Promise<Trade[]> {
+    const local = tradingEngine.getTradeHistory();
     try {
       const res = await fetch('/api/trades/history');
       if (res.ok) {
-        return await res.json();
+        const serverHistory: Trade[] = await res.json();
+        if (Array.isArray(serverHistory) && serverHistory.length > 0) {
+          const map = new Map<string, Trade>();
+          for (const t of local) map.set(t.id, t);
+          for (const t of serverHistory) map.set(t.id, t);
+          return Array.from(map.values());
+        }
       }
     } catch {
       //
     }
-    return [];
+    return local;
   }
 
   // Get wallet details
@@ -422,10 +407,15 @@ export class ApiService {
     durationSeconds: number;
     accountMode: 'DEMO' | 'LIVE';
     payoutRate?: number;
+    currentPrice?: number;
   }): Promise<Trade> {
+    const entryPrice = (params.currentPrice && params.currentPrice > 0)
+      ? params.currentPrice
+      : tradingEngine.getLatestPrice(params.symbol);
+
     const res = await this.placeTrade({
       ...params,
-      currentPrice: 0,
+      currentPrice: entryPrice,
     });
     if (res.success && res.trade) {
       return res.trade;

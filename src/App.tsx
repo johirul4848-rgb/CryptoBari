@@ -45,7 +45,8 @@ import { sound } from './utils/audio';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { auth, db } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { tradingEngine } from './services/tradingEngine';
 
 const initialLiveList = generateInitialLiveSymbols();
 // Default initial symbol: Top live pair (e.g. BTC/USDT or EUR/USD)
@@ -256,55 +257,82 @@ export const App: React.FC = () => {
     }).catch(() => {});
   }, []);
 
-  // Fetch active and past trades periodically
+  // Subscribe to tradingEngine for live trades synchronization and authoritative settlements
   useEffect(() => {
-    const checkTrades = async () => {
-      try {
-        const trades = await apiService.fetchTrades();
-        if (!trades) return;
-
-        // Compare newly settled trades for audio/visual notification
-        const active = trades.filter(t => t.status === 'ACTIVE');
-        const closed = trades.filter(t => t.status === 'SETTLED');
-
-        // Check if a trade recently settled
-        setActiveTrades(prevActive => {
-          for (const prev of prevActive) {
-            const nowSettled = closed.find(c => c.id === prev.id);
-            if (nowSettled) {
-              // Sound notification
-              if (nowSettled.result === 'WIN') {
-                sound.playWin();
-              } else if (nowSettled.result === 'LOSS') {
-                sound.playLoss();
-              }
-              setSettledTradeToast(nowSettled);
-              // Automatic Referral Commission: 20% on loss, 20% reduced on win
-              if (nowSettled.result === 'WIN' || nowSettled.result === 'LOSS') {
-                referralService.processTradeCommission(nowSettled.investment, nowSettled.result as 'WIN' | 'LOSS');
-              }
-              // Update wallet
-              apiService.fetchWallet().then(w => {
-                if (w) setWallet(w);
-              });
-            }
-          }
-          return active;
-        });
-
-        setAllTrades(trades);
-      } catch {
-        // silent
+    // Listen for settled trades
+    const unsubSettled = tradingEngine.onTradeSettled((nowSettled) => {
+      // Sound notification
+      if (nowSettled.result === 'WIN') {
+        sound.playWin();
+      } else if (nowSettled.result === 'LOSS') {
+        sound.playLoss();
       }
-    };
+      setSettledTradeToast(nowSettled);
 
-    const interval = setInterval(checkTrades, 1000);
-    return () => clearInterval(interval);
+      // Automatic Referral Commission: 20% on loss, 20% reduced on win
+      if (nowSettled.result === 'WIN' || nowSettled.result === 'LOSS') {
+        referralService.processTradeCommission(nowSettled.investment, nowSettled.result as 'WIN' | 'LOSS');
+      }
+
+      // Update wallet balance based on authoritative settlement outcome
+      setWallet(prev => {
+        let newDemo = prev.demoBalance;
+        let newLive = prev.liveBalance;
+        let newLocked = prev.lockedBalance;
+
+        if (nowSettled.accountMode === 'DEMO') {
+          if (nowSettled.result === 'WIN') {
+            newDemo = Number((newDemo + nowSettled.investment + nowSettled.profit).toFixed(2));
+          } else if (nowSettled.result === 'TIE') {
+            newDemo = Number((newDemo + nowSettled.investment).toFixed(2));
+          }
+        } else {
+          // LIVE
+          newLocked = Number(Math.max(0, newLocked - nowSettled.investment).toFixed(2));
+          if (nowSettled.result === 'WIN') {
+            newLive = Number((newLive + nowSettled.investment + nowSettled.profit).toFixed(2));
+          } else if (nowSettled.result === 'TIE') {
+            newLive = Number((newLive + nowSettled.investment).toFixed(2));
+          }
+        }
+
+        const updatedWallet: UserWallet = {
+          ...prev,
+          demoBalance: newDemo,
+          liveBalance: newLive,
+          lockedBalance: newLocked,
+        };
+
+        // Sync with Firestore if authenticated
+        if (auth.currentUser) {
+          updateDoc(doc(db, 'users', auth.currentUser.uid), {
+            'wallet.demoBalance': newDemo,
+            'wallet.liveBalance': newLive,
+          }).catch(e => console.warn('Settlement Firestore sync error:', e));
+        }
+
+        return updatedWallet;
+      });
+    });
+
+    // Listen for active/all trades updates
+    const unsubTrades = tradingEngine.onTradesChange((active, all) => {
+      setActiveTrades(active);
+      setAllTrades(all);
+    });
+
+    return () => {
+      unsubSettled();
+      unsubTrades();
+    };
   }, []);
 
   // Subscribe to Binance 24h ticker for all symbol price updates
   useEffect(() => {
     const unsub = apiService.subscribeAllTickers((updatedSymbols) => {
+      for (const item of updatedSymbols) {
+        tradingEngine.updatePrice(item.symbol, item.price);
+      }
       setSymbols(prevSymbols => {
         const symbolMap = new Map(updatedSymbols.map(s => [s.symbol, s]));
         return prevSymbols.map(sym => {
@@ -364,9 +392,16 @@ export const App: React.FC = () => {
     investment: number;
     durationSeconds: number;
   }) => {
+    const available = accountMode === 'DEMO' ? wallet.demoBalance : wallet.liveBalance;
+    if (params.investment > available) {
+      sound.playLoss();
+      return;
+    }
+
     setIsPlacingTrade(true);
     try {
-      const newTrade = await apiService.createTrade({
+      const livePrice = (currentPrice && currentPrice > 0) ? currentPrice : (activeSymbol.price || 100);
+      await apiService.createTrade({
         symbol: activeSymbol.symbol,
         displayPair: activeSymbol.displayPair,
         direction: params.direction,
@@ -374,23 +409,37 @@ export const App: React.FC = () => {
         durationSeconds: params.durationSeconds,
         accountMode,
         payoutRate: activeSymbol.payoutRate,
+        currentPrice: livePrice,
       });
-
-      // Optimistically add to active trades
-      setActiveTrades(prev => [newTrade, ...prev]);
-      setAllTrades(prev => [newTrade, ...prev]);
 
       // Deduct from wallet optimistically
       setWallet(prev => {
+        let newDemo = prev.demoBalance;
+        let newLive = prev.liveBalance;
+        let newLocked = prev.lockedBalance;
+
         if (accountMode === 'DEMO') {
-          return { ...prev, demoBalance: Math.max(0, prev.demoBalance - params.investment) };
+          newDemo = Number(Math.max(0, prev.demoBalance - params.investment).toFixed(2));
         } else {
-          return {
-            ...prev,
-            liveBalance: Math.max(0, prev.liveBalance - params.investment),
-            lockedBalance: prev.lockedBalance + params.investment,
-          };
+          newLive = Number(Math.max(0, prev.liveBalance - params.investment).toFixed(2));
+          newLocked = Number((prev.lockedBalance + params.investment).toFixed(2));
         }
+
+        const newWallet: UserWallet = {
+          ...prev,
+          demoBalance: newDemo,
+          liveBalance: newLive,
+          lockedBalance: newLocked,
+        };
+
+        if (auth.currentUser) {
+          updateDoc(doc(db, 'users', auth.currentUser.uid), {
+            'wallet.demoBalance': newDemo,
+            'wallet.liveBalance': newLive,
+          }).catch(e => console.warn('Firestore wallet deduction error:', e));
+        }
+
+        return newWallet;
       });
     } catch (err) {
       console.error('Failed to create trade:', err);
@@ -651,6 +700,7 @@ export const App: React.FC = () => {
                       onPriceUpdate={(price) => {
                         setCurrentPrice(price);
                         setActiveSymbol(prev => ({ ...prev, price }));
+                        tradingEngine.updatePrice(activeSymbol.symbol, price);
                       }}
                     />
                   </ErrorBoundary>

@@ -34,7 +34,7 @@ export const SupportPage: React.FC = () => {
     },
     {
       q: 'How does the Binance Pay Deposit work?',
-      a: 'Navigate to Deposit, enter your amount in USD (minimum $10), and send the funds via Binance App to Binance ID: 794380283 or scan the QR Code. Once submitted, our treasury department automatically reviews and credits your live wallet within 1-3 minutes.',
+      a: 'Navigate to Deposit, enter your amount in USD (minimum $5), and send the funds via Binance App to Binance ID: 794380283 or scan the QR Code. Once submitted, our treasury department automatically reviews and credits your live wallet within 1-3 minutes.',
     },
     {
       q: 'What is the minimum withdrawal amount?',

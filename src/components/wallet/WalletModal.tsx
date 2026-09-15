@@ -45,7 +45,11 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
   const handleDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (depositAmount <= 0) return;
+    if (depositAmount < 5) {
+      setActionSuccess('Minimum deposit is $5.00 USD.');
+      setTimeout(() => setActionSuccess(null), 3500);
+      return;
+    }
     sound.playClick();
     onDeposit(depositAmount, depositMethod);
     
@@ -249,7 +253,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">Deposit Amount (USD)</label>
                 <div className="flex items-center gap-2">
-                  {[20, 50, 100, 250, 500].map(amt => (
+                  {[5, 10, 25, 50, 100, 250, 500].map(amt => (
                     <button
                       type="button"
                       key={amt}
@@ -266,7 +270,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 </div>
                 <input
                   type="number"
-                  min="10"
+                  min="5"
                   max="50000"
                   value={depositAmount}
                   onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0)}
