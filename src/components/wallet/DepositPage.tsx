@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { influencerService } from '../../services/influencerService';
+import { recordDepositToFirebase } from '../../services/firebaseRequests';
+import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
 interface DepositPageProps {
   onBack: () => void;
@@ -58,6 +60,8 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   const [submittedDeposit, setSubmittedDeposit] = useState<any | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedGatewayId, setCopiedGatewayId] = useState(false);
+  const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
   // Dynamic Binance Gateway settings
   const [gatewaySettings, setGatewaySettings] = useState<BinanceSettings>({
@@ -215,6 +219,36 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           createdAt: new Date().toISOString(),
           status: 'PENDING_CONFIRMATION',
         });
+
+        // Record into Firebase Firestore
+        recordDepositToFirebase({
+          id: depId,
+          amount: depositAmount,
+          senderBinanceId: senderBinanceId.trim(),
+          binanceId: senderBinanceId.trim(),
+          receiverBinanceId: gatewaySettings.binanceId,
+          txHash: data.deposit?.txHash,
+          promoCode: cleanPromo || undefined,
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited: totalCredited,
+          userName,
+          userEmail,
+          status: 'PENDING',
+          createdAt: new Date().toISOString(),
+        }).catch(err => console.warn('Firestore deposit recording error:', err));
+
+        // Trigger confirmation waiting modal
+        setConfirmationModalData({
+          id: depId,
+          type: 'DEPOSIT',
+          amount: depositAmount,
+          binanceId: senderBinanceId.trim(),
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited: totalCredited,
+          promoCode: cleanPromo || undefined,
+        });
+        setIsConfirmationModalOpen(true);
+
         if (cleanPromo) {
           influencerService.processDepositWithPromo({
             depositId: depId,
@@ -254,6 +288,34 @@ export const DepositPage: React.FC<DepositPageProps> = ({
         createdAt: new Date().toISOString(),
         status: 'PENDING_CONFIRMATION',
       });
+
+      // Record fallback to Firebase Firestore
+      recordDepositToFirebase({
+        id: mockId,
+        amount: depositAmount,
+        senderBinanceId: senderBinanceId.trim(),
+        binanceId: senderBinanceId.trim(),
+        receiverBinanceId: gatewaySettings.binanceId,
+        promoCode: cleanPromo || undefined,
+        bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+        totalCredited: totalCredited,
+        userName,
+        userEmail,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      }).catch(err => console.warn('Firestore fallback deposit recording error:', err));
+
+      // Trigger confirmation waiting modal
+      setConfirmationModalData({
+        id: mockId,
+        type: 'DEPOSIT',
+        amount: depositAmount,
+        binanceId: senderBinanceId.trim(),
+        bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+        totalCredited: totalCredited,
+        promoCode: cleanPromo || undefined,
+      });
+      setIsConfirmationModalOpen(true);
       if (cleanPromo) {
         influencerService.processDepositWithPromo({
           depositId: mockId,
@@ -847,6 +909,13 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Reassuring Confirmation Waiting Modal */}
+      <TransactionWaitConfirmationModal
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        data={confirmationModalData}
+      />
     </div>
   );
 };

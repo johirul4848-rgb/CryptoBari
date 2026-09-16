@@ -37,7 +37,7 @@ service cloud.firestore {
     // Deposit Requests (User submits, Admin approves)
     match /deposit_requests/{requestId} {
       allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if true;
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -45,7 +45,7 @@ service cloud.firestore {
     // Withdrawal Requests (User submits, Admin processes)
     match /withdrawal_requests/{requestId} {
       allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if true;
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }

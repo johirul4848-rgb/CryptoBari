@@ -14,6 +14,8 @@ import {
 import { sound } from '../../utils/audio';
 import { getTraderTier } from '../../utils/tier';
 import { influencerService } from '../../services/influencerService';
+import { recordWithdrawalToFirebase } from '../../services/firebaseRequests';
+import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
 interface WithdrawModalProps {
   isOpen: boolean;
@@ -40,6 +42,8 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedWithdrawal, setSubmittedWithdrawal] = useState<any | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -108,6 +112,32 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         sound.playWin();
         const record = data.withdrawal;
         setSubmittedWithdrawal(record);
+
+        // Record in Firebase Firestore
+        recordWithdrawalToFirebase({
+          id: record.id,
+          amount: withdrawAmount,
+          currency: 'USD',
+          method: 'Binance Pay',
+          address: receiverBinanceId.trim(),
+          binanceId: receiverBinanceId.trim(),
+          receiverBinanceId: receiverBinanceId.trim(),
+          network: 'Binance Pay UID Transfer',
+          userName,
+          userEmail,
+          status: 'PENDING',
+          createdAt: new Date().toISOString(),
+        }).catch((err) => console.warn('Firestore withdrawal write error:', err));
+
+        // Open reassurance confirmation modal
+        setConfirmationModalData({
+          id: record.id,
+          type: 'WITHDRAWAL',
+          amount: withdrawAmount,
+          binanceId: receiverBinanceId.trim(),
+        });
+        setIsConfirmationModalOpen(true);
+
         if (activePromoBonus > 0) {
           influencerService.forfeitPromoBonus();
         }
@@ -145,6 +175,32 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         status: 'PENDING',
         createdAt: Date.now(),
       };
+
+      // Record fallback in Firebase Firestore
+      recordWithdrawalToFirebase({
+        id: mockWithdrawal.id,
+        amount: withdrawAmount,
+        currency: 'USD',
+        method: 'Binance Pay',
+        address: receiverBinanceId.trim(),
+        binanceId: receiverBinanceId.trim(),
+        receiverBinanceId: receiverBinanceId.trim(),
+        network: 'Binance Pay UID Transfer',
+        userName,
+        userEmail,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      }).catch((err) => console.warn('Firestore fallback withdrawal write error:', err));
+
+      // Open reassurance confirmation modal
+      setConfirmationModalData({
+        id: mockWithdrawal.id,
+        type: 'WITHDRAWAL',
+        amount: withdrawAmount,
+        binanceId: receiverBinanceId.trim(),
+      });
+      setIsConfirmationModalOpen(true);
+
       try {
         const raw = localStorage.getItem('cb_admin_shared_withdrawals');
         const existing = raw ? JSON.parse(raw) : [];
@@ -462,6 +518,13 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Short Reassurance Confirmation Modal */}
+      <TransactionWaitConfirmationModal
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        data={confirmationModalData}
+      />
     </div>
   );
 };

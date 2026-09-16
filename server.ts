@@ -15,7 +15,7 @@ dotenv.config();
 // Admin environment credentials
 const ADMIN_ACCESS_CODE = process.env.ADMIN_ACCESS_CODE || '@53595';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Jahid@5359';
-const ADMIN_BORN_DAY = (process.env.ADMIN_BORN_DAY || 'Sunday').trim().toLowerCase();
+const ADMIN_ACCESS_PIN = (process.env.ADMIN_ACCESS_PIN || '479057').trim();
 
 export interface DepositRequestRecord {
   id: string;
@@ -798,7 +798,7 @@ async function startServer() {
 
   // 1. Three-Stage Admin Security Verification Portal
   app.post('/api/admin/auth/verify-stage', (req, res) => {
-    const { stage, accessCode, password, bornDay } = req.body;
+    const { stage, accessCode, password, accessPin, bornDay } = req.body;
 
     if (stage === 1) {
       if (!accessCode || accessCode !== ADMIN_ACCESS_CODE) {
@@ -814,7 +814,7 @@ async function startServer() {
       if (!password || password !== ADMIN_PASSWORD) {
         return res.status(401).json({ success: false, message: 'Incorrect Password. Security Alert Logged.' });
       }
-      return res.json({ success: true, stage: 2, message: 'Stage 2 Passed. Identity Question Required.' });
+      return res.json({ success: true, stage: 2, message: 'Stage 2 Passed. Access PIN Required.' });
     }
 
     if (stage === 3) {
@@ -824,9 +824,9 @@ async function startServer() {
       if (!password || password !== ADMIN_PASSWORD) {
         return res.status(401).json({ success: false, message: 'Password invalid.' });
       }
-      const formattedBornDay = (bornDay || '').trim().toLowerCase();
-      if (!formattedBornDay || formattedBornDay !== ADMIN_BORN_DAY) {
-        return res.status(401).json({ success: false, message: 'Security Born Day verification failed.' });
+      const providedPin = (accessPin || bornDay || '').trim();
+      if (!providedPin || providedPin !== ADMIN_ACCESS_PIN) {
+        return res.status(401).json({ success: false, message: 'Access PIN verification failed. Access Denied.' });
       }
 
       // Generate verified session

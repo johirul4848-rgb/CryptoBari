@@ -40,6 +40,11 @@ import {
 import { MarketSymbol } from '../../types';
 import { sound } from '../../utils/audio';
 import {
+  fetchDepositsFromFirebase,
+  fetchWithdrawalsFromFirebase,
+  updateFirebaseRequestStatus,
+} from '../../services/firebaseRequests';
+import {
   influencerService,
   InfluencerProfile,
   InfluencerWithdrawalRequest,
@@ -73,6 +78,7 @@ interface DepositItem {
   method: string;
   txHash: string;
   binanceId?: string;
+  receiverBinanceId?: string;
   promoCode?: string;
   bonusPercent?: number;
   bonusAmount?: number;
@@ -213,7 +219,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
-      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes, infRes, infWithRes] = await Promise.all([
+      const [depRes, withRes, notRes, usrRes, finRes, refRes, repRes, binRes, supRes, infRes, infWithRes, fbDeposits, fbWithdrawals] = await Promise.all([
         fetch('/api/admin/deposits').then(r => r.json()).catch(() => []),
         fetch('/api/admin/withdrawals').then(r => r.json()).catch(() => []),
         fetch('/api/admin/notices').then(r => r.json()).catch(() => []),
@@ -225,9 +231,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fetch('/api/support/tickets').then(r => r.json()).catch(() => []),
         fetch('/api/admin/influencers').then(r => r.json()).catch(() => null),
         fetch('/api/admin/influencer-withdrawals').then(r => r.json()).catch(() => null),
+        fetchDepositsFromFirebase().catch(() => []),
+        fetchWithdrawalsFromFirebase().catch(() => []),
       ]);
 
-      if (Array.isArray(depRes)) setDeposits(depRes);
+      // Merge backend deposits with Firebase Firestore submissions
+      let combinedDeposits: DepositItem[] = Array.isArray(depRes) ? [...depRes] : [];
+      if (Array.isArray(fbDeposits) && fbDeposits.length > 0) {
+        const depMap = new Map<string, DepositItem>();
+        combinedDeposits.forEach((d) => depMap.set(d.id, d));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fbDeposits.forEach((fbd: any) => {
+          if (!depMap.has(fbd.id)) {
+            depMap.set(fbd.id, {
+              id: fbd.id,
+              userId: fbd.userEmail || 'usr_trader',
+              userName: fbd.userName || 'Trader',
+              userEmail: fbd.userEmail || '',
+              amount: fbd.amount || 0,
+              currency: 'USD',
+              method: 'Binance Pay',
+              binanceId: fbd.binanceId || fbd.senderBinanceId || '',
+              receiverBinanceId: fbd.receiverBinanceId || '794380283',
+              txHash: fbd.txHash,
+              promoCode: fbd.promoCode,
+              bonusAmount: fbd.bonusAmount,
+              status: fbd.status || 'PENDING',
+              createdAt: typeof fbd.createdAt === 'string' ? new Date(fbd.createdAt).getTime() : (fbd.createdAt || Date.now()),
+            });
+          }
+        });
+        combinedDeposits = Array.from(depMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      }
+      setDeposits(combinedDeposits);
 
       // Load influencers (merge server & local service)
       const localInfs = influencerService.getAllInfluencers();
@@ -247,7 +283,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setInfluencerWithdrawals(localInfWiths);
       }
 
-      // Robustly merge backend withdrawals with any locally submitted withdrawals (clearing previous mock data)
+      // Robustly merge backend withdrawals with any locally submitted withdrawals and Firebase
       let combinedWithdrawals: WithdrawalItem[] = Array.isArray(withRes) ? [...withRes] : [];
       try {
         const raw = localStorage.getItem('cb_admin_shared_withdrawals');
@@ -277,6 +313,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }
       } catch {
         // ignore
+      }
+
+      // Merge Firebase withdrawals
+      if (Array.isArray(fbWithdrawals) && fbWithdrawals.length > 0) {
+        const wthMap = new Map<string, WithdrawalItem>();
+        combinedWithdrawals.forEach((w) => wthMap.set(w.id, w));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fbWithdrawals.forEach((fbw: any) => {
+          if (!wthMap.has(fbw.id)) {
+            wthMap.set(fbw.id, {
+              id: fbw.id,
+              userId: fbw.userEmail || 'usr_trader',
+              userName: fbw.userName || 'Trader',
+              userEmail: fbw.userEmail || '',
+              amount: fbw.amount || 0,
+              currency: fbw.currency || 'USD',
+              method: fbw.method || 'Binance Pay',
+              address: fbw.address || fbw.binanceId || fbw.receiverBinanceId || '',
+              binanceId: fbw.binanceId || fbw.receiverBinanceId || fbw.address || '',
+              receiverBinanceId: fbw.receiverBinanceId || fbw.binanceId || fbw.address || '',
+              network: fbw.network || 'Binance Pay UID Transfer',
+              status: fbw.status || 'PENDING',
+              createdAt: typeof fbw.createdAt === 'string' ? new Date(fbw.createdAt).getTime() : (fbw.createdAt || Date.now()),
+            });
+          }
+        });
+        combinedWithdrawals = Array.from(wthMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       }
       setWithdrawals(combinedWithdrawals);
 
@@ -403,6 +466,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // 1. Approve Deposit Request
   const handleApproveDeposit = async (id: string) => {
     sound.playClick();
+    updateFirebaseRequestStatus('deposit_requests', id, 'APPROVED').catch(() => {});
     try {
       const res = await fetch(`/api/admin/deposits/${id}/approve`, { method: 'POST' });
       const data = await res.json();
@@ -439,6 +503,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleRejectDeposit = async (id: string) => {
     sound.playClick();
     const reason = window.prompt('Enter rejection reason for client:', 'Blockchain transaction unverified / invalid hash') || 'Verification failed';
+    updateFirebaseRequestStatus('deposit_requests', id, 'REJECTED', reason).catch(() => {});
     try {
       const res = await fetch(`/api/admin/deposits/${id}/reject`, {
         method: 'POST',
@@ -460,6 +525,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // 3. Approve Withdrawal Request
   const handleApproveWithdrawal = async (id: string) => {
     sound.playClick();
+    updateFirebaseRequestStatus('withdrawal_requests', id, 'APPROVED').catch(() => {});
     try {
       const res = await fetch(`/api/admin/withdrawals/${id}/approve`, { method: 'POST' });
       const data = await res.json();
@@ -501,6 +567,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleRejectWithdrawal = async (id: string) => {
     sound.playClick();
     const reason = window.prompt('Enter reason for withdrawal rejection:', 'Account KYC requirement or address format error') || 'Verification requirement';
+    updateFirebaseRequestStatus('withdrawal_requests', id, 'REJECTED', reason).catch(() => {});
     try {
       const res = await fetch(`/api/admin/withdrawals/${id}/reject`, {
         method: 'POST',

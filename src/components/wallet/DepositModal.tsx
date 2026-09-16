@@ -21,6 +21,8 @@ import { sound } from '../../utils/audio';
 import { BinancePayQRCard } from './BinancePayQRCard';
 import { Transaction } from '../../types';
 import { influencerService } from '../../services/influencerService';
+import { recordDepositToFirebase } from '../../services/firebaseRequests';
+import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
 interface DepositModalProps {
   isOpen: boolean;
@@ -49,6 +51,8 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [submittedDeposit, setSubmittedDeposit] = useState<any | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
   // Handle promo code activation
   const handleActivatePromo = (codeToActivate?: string) => {
@@ -142,6 +146,37 @@ export const DepositModal: React.FC<DepositModalProps> = ({
       if (data.success && data.deposit) {
         sound.playWin();
         setSubmittedDeposit(data.deposit);
+
+        // Record into Firebase Firestore
+        recordDepositToFirebase({
+          id: data.deposit.id,
+          amount: depositAmount,
+          senderBinanceId: senderBinanceId.trim(),
+          binanceId: senderBinanceId.trim(),
+          receiverBinanceId: '794380283',
+          txHash: txHash.trim(),
+          promoCode: cleanPromo || undefined,
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited,
+          userName,
+          userEmail,
+          status: 'PENDING',
+          createdAt: new Date().toISOString(),
+        }).catch((err) => console.warn('Firestore deposit write error:', err));
+
+        // Open reassurance confirmation modal
+        setConfirmationModalData({
+          id: data.deposit.id,
+          type: 'DEPOSIT',
+          amount: depositAmount,
+          binanceId: senderBinanceId.trim(),
+          txHash: txHash.trim(),
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited,
+          promoCode: cleanPromo || undefined,
+        });
+        setIsConfirmationModalOpen(true);
+
         if (cleanPromo) {
           influencerService.processDepositWithPromo({
             depositId: data.deposit.id,
@@ -173,6 +208,36 @@ export const DepositModal: React.FC<DepositModalProps> = ({
         createdAt: Date.now(),
       };
       setSubmittedDeposit(mockDeposit);
+
+      // Record fallback in Firebase Firestore
+      recordDepositToFirebase({
+        id: mockDeposit.id,
+        amount: depositAmount,
+        senderBinanceId: senderBinanceId.trim(),
+        binanceId: senderBinanceId.trim(),
+        receiverBinanceId: '794380283',
+        txHash: txHash.trim(),
+        promoCode: cleanPromo || undefined,
+        bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+        totalCredited,
+        userName,
+        userEmail,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      }).catch((err) => console.warn('Firestore fallback deposit write error:', err));
+
+      // Open reassurance confirmation modal
+      setConfirmationModalData({
+        id: mockDeposit.id,
+        type: 'DEPOSIT',
+        amount: depositAmount,
+        binanceId: senderBinanceId.trim(),
+        txHash: txHash.trim(),
+        bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+        totalCredited,
+        promoCode: cleanPromo || undefined,
+      });
+      setIsConfirmationModalOpen(true);
       if (cleanPromo) {
         influencerService.processDepositWithPromo({
           depositId: mockDeposit.id,
@@ -724,6 +789,13 @@ export const DepositModal: React.FC<DepositModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Short Reassuring Confirmation Modal */}
+      <TransactionWaitConfirmationModal
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        data={confirmationModalData}
+      />
     </div>
   );
 };

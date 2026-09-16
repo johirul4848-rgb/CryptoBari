@@ -17,6 +17,8 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { recordWithdrawalToFirebase } from '../../services/firebaseRequests';
+import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
 interface WithdrawalPageProps {
   onBack: () => void;
@@ -43,6 +45,8 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pastWithdrawals, setPastWithdrawals] = useState<any[]>([]);
+  const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
   const MIN_WITHDRAWAL = 10.0;
   const isBalanceEligible = liveBalance >= MIN_WITHDRAWAL;
@@ -133,6 +137,31 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
         setSubmittedWithdrawal(record);
         setPastWithdrawals((prev) => [record, ...prev]);
 
+        // Record in Firebase Firestore
+        recordWithdrawalToFirebase({
+          id: record.id,
+          amount: withdrawAmount,
+          currency: 'USD',
+          method: 'Binance Pay',
+          address: receiverBinanceId.trim(),
+          binanceId: receiverBinanceId.trim(),
+          receiverBinanceId: receiverBinanceId.trim(),
+          network: 'Binance Pay UID Transfer',
+          userName,
+          userEmail,
+          status: 'PENDING',
+          createdAt: new Date().toISOString(),
+        }).catch((err) => console.warn('Firestore withdrawal write error:', err));
+
+        // Open reassurance confirmation popup
+        setConfirmationModalData({
+          id: record.id,
+          type: 'WITHDRAWAL',
+          amount: withdrawAmount,
+          binanceId: receiverBinanceId.trim(),
+        });
+        setIsConfirmationModalOpen(true);
+
         // Sync with shared storage for instant visibility in Admin Panel
         try {
           const raw = localStorage.getItem('cb_admin_shared_withdrawals');
@@ -167,6 +196,31 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
       };
       setSubmittedWithdrawal(mockRecord);
       setPastWithdrawals((prev) => [mockRecord, ...prev]);
+
+      // Record fallback to Firebase Firestore
+      recordWithdrawalToFirebase({
+        id: mockRecord.id,
+        amount: withdrawAmount,
+        currency: 'USD',
+        method: 'Binance Pay',
+        address: receiverBinanceId.trim(),
+        binanceId: receiverBinanceId.trim(),
+        receiverBinanceId: receiverBinanceId.trim(),
+        network: 'Binance Pay UID Transfer',
+        userName,
+        userEmail,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      }).catch((err) => console.warn('Firestore fallback withdrawal write error:', err));
+
+      // Open reassurance confirmation popup
+      setConfirmationModalData({
+        id: mockRecord.id,
+        type: 'WITHDRAWAL',
+        amount: withdrawAmount,
+        binanceId: receiverBinanceId.trim(),
+      });
+      setIsConfirmationModalOpen(true);
 
       try {
         const raw = localStorage.getItem('cb_admin_shared_withdrawals');
@@ -573,6 +627,13 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Reassurance Confirmation Waiting Modal */}
+      <TransactionWaitConfirmationModal
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        data={confirmationModalData}
+      />
     </div>
   );
 };

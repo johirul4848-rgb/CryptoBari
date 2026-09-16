@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Lock, KeyRound, Calendar, AlertCircle, ArrowRight, CheckCircle2, X, Eye, EyeOff } from 'lucide-react';
+import { ShieldCheck, Lock, KeyRound, Key, AlertCircle, ArrowRight, CheckCircle2, X, Eye, EyeOff } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
 interface AdminAuthModalProps {
@@ -17,8 +17,9 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
   const [stage, setStage] = useState<1 | 2 | 3>(1);
   const [accessCode, setAccessCode] = useState('');
   const [password, setPassword] = useState('');
-  const [bornDay, setBornDay] = useState('');
+  const [accessPin, setAccessPin] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -37,7 +38,7 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
           stage,
           accessCode,
           password,
-          bornDay,
+          accessPin,
         }),
       });
 
@@ -77,7 +78,9 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
     setStage(1);
     setAccessCode('');
     setPassword('');
-    setBornDay('');
+    setAccessPin('');
+    setShowPassword(false);
+    setShowPin(false);
     setError(null);
     onClose();
   };
@@ -202,24 +205,30 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
             {stage === 3 && (
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                  Stage 3: Security Question (Born Day)
+                  <Key className="w-3.5 h-3.5 text-emerald-400" />
+                  Stage 3: Master Access PIN Number
                 </label>
-                <p className="text-xs text-amber-300 font-semibold mb-2">
-                  "Which day were you born?"
-                </p>
-                <input
-                  id="admin-born-day-input"
-                  type="text"
-                  required
-                  value={bornDay}
-                  onChange={(e) => setBornDay(e.target.value)}
-                  placeholder="e.g. Sunday"
-                  className="w-full px-4 py-3 bg-[#0d121f] border border-slate-700/80 rounded-xl text-white font-medium text-sm placeholder-slate-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition"
-                  autoFocus
-                />
+                <div className="relative">
+                  <input
+                    id="admin-access-pin-input"
+                    type={showPin ? 'text' : 'password'}
+                    required
+                    value={accessPin}
+                    onChange={(e) => setAccessPin(e.target.value)}
+                    placeholder="Enter 6-digit access PIN..."
+                    className="w-full px-4 py-3 pr-11 bg-[#0d121f] border border-slate-700/80 rounded-xl text-white font-mono tracking-widest text-sm placeholder-slate-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-1"
+                  >
+                    {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4 text-emerald-400" />}
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-500 mt-1.5">
-                  Final identity confirmation for master broker operations.
+                  Final cryptographic PIN authorization for master broker operations.
                 </p>
               </div>
             )}
