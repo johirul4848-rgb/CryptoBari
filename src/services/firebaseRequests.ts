@@ -1,4 +1,4 @@
-import { doc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 
 export interface FirebaseDepositData {
@@ -68,6 +68,18 @@ export async function recordDepositToFirebase(data: FirebaseDepositData): Promis
     };
 
     await setDoc(docRef, payload, { merge: true });
+
+    // Also mirror to localStorage for instant local tab responsiveness
+    try {
+      const existingRaw = localStorage.getItem('cb_admin_shared_deposits');
+      const list = existingRaw ? JSON.parse(existingRaw) : [];
+      const updated = [payload, ...list.filter((x: any) => x.id !== payload.id)].slice(0, 100);
+      localStorage.setItem('cb_admin_shared_deposits', JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('cb_deposits_updated', { detail: payload }));
+    } catch {
+      // ignore localstorage error
+    }
+
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `deposit_requests/${data.id}`);
@@ -107,6 +119,18 @@ export async function recordWithdrawalToFirebase(data: FirebaseWithdrawalData): 
     };
 
     await setDoc(docRef, payload, { merge: true });
+
+    // Also mirror to localStorage for instant local tab responsiveness
+    try {
+      const existingRaw = localStorage.getItem('cb_admin_shared_withdrawals');
+      const list = existingRaw ? JSON.parse(existingRaw) : [];
+      const updated = [payload, ...list.filter((x: any) => x.id !== payload.id)].slice(0, 100);
+      localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('cb_withdrawals_updated', { detail: payload }));
+    } catch {
+      // ignore localstorage error
+    }
+
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `withdrawal_requests/${data.id}`);
@@ -120,12 +144,64 @@ export async function recordWithdrawalToFirebase(data: FirebaseWithdrawalData): 
 export async function fetchDepositsFromFirebase(): Promise<any[]> {
   try {
     const colRef = collection(db, 'deposit_requests');
-    const q = query(colRef, orderBy('createdAt', 'desc'), limit(100));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data());
+    let docs: any[] = [];
+    try {
+      const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
+      const snap = await getDocs(q);
+      docs = snap.docs.map(d => d.data());
+    } catch {
+      // Fallback without ordering in case index or field sorting issues
+      const snap = await getDocs(colRef);
+      docs = snap.docs.map(d => d.data());
+    }
+    return docs;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'deposit_requests');
     return [];
+  }
+}
+
+/**
+ * Subscribe to real-time deposit requests in Firestore
+ */
+export function subscribeDepositsFromFirebase(onUpdate: (deposits: any[]) => void): () => void {
+  try {
+    const colRef = collection(db, 'deposit_requests');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        const docs = snap.docs.map((d) => d.data());
+        onUpdate(docs);
+      },
+      (error) => {
+        console.warn('Realtime deposit subscription notice:', error.message);
+      }
+    );
+    return unsubscribe;
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * Subscribe to real-time withdrawal requests in Firestore
+ */
+export function subscribeWithdrawalsFromFirebase(onUpdate: (withdrawals: any[]) => void): () => void {
+  try {
+    const colRef = collection(db, 'withdrawal_requests');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        const docs = snap.docs.map((d) => d.data());
+        onUpdate(docs);
+      },
+      (error) => {
+        console.warn('Realtime withdrawal subscription notice:', error.message);
+      }
+    );
+    return unsubscribe;
+  } catch {
+    return () => {};
   }
 }
 
@@ -135,9 +211,17 @@ export async function fetchDepositsFromFirebase(): Promise<any[]> {
 export async function fetchWithdrawalsFromFirebase(): Promise<any[]> {
   try {
     const colRef = collection(db, 'withdrawal_requests');
-    const q = query(colRef, orderBy('createdAt', 'desc'), limit(100));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data());
+    let docs: any[] = [];
+    try {
+      const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
+      const snap = await getDocs(q);
+      docs = snap.docs.map(d => d.data());
+    } catch {
+      // Fallback without ordering in case index or field sorting issues
+      const snap = await getDocs(colRef);
+      docs = snap.docs.map(d => d.data());
+    }
+    return docs;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'withdrawal_requests');
     return [];

@@ -237,6 +237,33 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           createdAt: new Date().toISOString(),
         }).catch(err => console.warn('Firestore deposit recording error:', err));
 
+        // Sync with shared storage for instant visibility in Admin Panel
+        try {
+          const raw = localStorage.getItem('cb_admin_shared_deposits');
+          const existing = raw ? JSON.parse(raw) : [];
+          const record = {
+            id: depId,
+            userId: userEmail,
+            userName,
+            userEmail,
+            amount: depositAmount,
+            currency: 'USD',
+            method: 'Binance Pay',
+            binanceId: senderBinanceId.trim(),
+            receiverBinanceId: gatewaySettings.binanceId,
+            txHash: data.deposit?.txHash,
+            promoCode: cleanPromo || undefined,
+            bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+            totalCredited,
+            status: 'PENDING',
+            createdAt: Date.now(),
+          };
+          const updated = [record, ...existing.filter((x: any) => x.id !== depId)];
+          localStorage.setItem('cb_admin_shared_deposits', JSON.stringify(updated));
+        } catch {
+          // ignore
+        }
+
         // Trigger confirmation waiting modal
         setConfirmationModalData({
           id: depId,
@@ -304,6 +331,32 @@ export const DepositPage: React.FC<DepositPageProps> = ({
         status: 'PENDING',
         createdAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore fallback deposit recording error:', err));
+
+      // Sync with shared storage for instant visibility in Admin Panel
+      try {
+        const raw = localStorage.getItem('cb_admin_shared_deposits');
+        const existing = raw ? JSON.parse(raw) : [];
+        const record = {
+          id: mockId,
+          userId: userEmail,
+          userName,
+          userEmail,
+          amount: depositAmount,
+          currency: 'USD',
+          method: 'Binance Pay',
+          binanceId: senderBinanceId.trim(),
+          receiverBinanceId: gatewaySettings.binanceId,
+          promoCode: cleanPromo || undefined,
+          bonusAmount: bonusAmount > 0 ? bonusAmount : undefined,
+          totalCredited,
+          status: 'PENDING',
+          createdAt: Date.now(),
+        };
+        const updated = [record, ...existing.filter((x: any) => x.id !== mockId)];
+        localStorage.setItem('cb_admin_shared_deposits', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
 
       // Trigger confirmation waiting modal
       setConfirmationModalData({
