@@ -45,6 +45,7 @@ import {
   subscribeDepositsFromFirebase,
   subscribeWithdrawalsFromFirebase,
   updateFirebaseRequestStatus,
+  approveDepositInFirebase,
 } from '../../services/firebaseRequests';
 import {
   influencerService,
@@ -506,7 +507,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // 1. Approve Deposit Request
   const handleApproveDeposit = async (id: string) => {
     sound.playClick();
-    updateFirebaseRequestStatus('deposit_requests', id, 'APPROVED').catch(() => {});
     
     const dep = deposits.find(d => d.id === id);
     if (dep && dep.promoCode) {
@@ -518,6 +518,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         promoCode: dep.promoCode,
       });
     }
+
+    // Authoritative approval in Firebase Firestore (increments balance in cloud and syncs real-time)
+    await approveDepositInFirebase({
+      id,
+      amount: dep?.amount || 0,
+      bonusAmount: dep?.bonusAmount || 0,
+      totalCredited: dep?.totalCredited || dep?.amount || 0,
+      userId: dep?.userId,
+      userEmail: dep?.userEmail,
+      userName: dep?.userName,
+    }).catch(err => console.warn('approveDepositInFirebase error:', err));
 
     try {
       const res = await fetch(`/api/admin/deposits/${id}/approve`, { method: 'POST' });
@@ -533,7 +544,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       } else {
         // Fallback for Vercel / serverless environment
         sound.playWin();
-        showNotification(`Deposit #${id} approved! Marked as verified.`);
+        showNotification(`Deposit #${id} approved! Real balance credited.`);
         setDeposits(prev => prev.map(d => d.id === id ? { ...d, status: 'APPROVED', approvedAt: Date.now() } : d));
         if (onDepositApprovedNotification) {
           const credited = dep ? (dep.totalCredited || dep.amount) : 0;

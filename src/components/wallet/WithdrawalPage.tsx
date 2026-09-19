@@ -17,6 +17,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { influencerService } from '../../services/influencerService';
 import { recordWithdrawalToFirebase } from '../../services/firebaseRequests';
 import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
@@ -24,6 +25,7 @@ interface WithdrawalPageProps {
   onBack: () => void;
   onWithdrawSuccess: (amount: number, method: string, address: string) => void;
   liveBalance: number;
+  bonusBalance?: number;
   userEmail?: string;
   userName?: string;
 }
@@ -32,12 +34,18 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
   onBack,
   onWithdrawSuccess,
   liveBalance = 0,
+  bonusBalance = 0,
   userEmail = 'johirul4848@gmail.com',
   userName = 'Johirul Islam',
 }) => {
+  const activePromoBonus = influencerService.getActivePromoBonus();
+  const totalBonus = Number(((bonusBalance || 0) + activePromoBonus).toFixed(2));
+  // Real cash liveBalance is the withdrawable portion
+  const withdrawableBalance = Math.max(0, parseFloat((liveBalance).toFixed(2)));
+
   const [receiverBinanceId, setReceiverBinanceId] = useState<string>('');
   const [withdrawAmount, setWithdrawAmount] = useState<number>(() =>
-    Math.max(10, Math.min(50, liveBalance))
+    Math.max(10, Math.min(50, withdrawableBalance))
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,7 +57,7 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
   const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
   const MIN_WITHDRAWAL = 10.0;
-  const isBalanceEligible = liveBalance >= MIN_WITHDRAWAL;
+  const isBalanceEligible = withdrawableBalance >= MIN_WITHDRAWAL;
 
   useEffect(() => {
     // Fetch past withdrawals
@@ -81,11 +89,17 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
     setErrorMsg(null);
 
     if (!isBalanceEligible) {
-      setErrorMsg(
-        `Insufficient account balance! Your live balance is $${liveBalance.toFixed(
-          2
-        )} USD. You need at least $${MIN_WITHDRAWAL.toFixed(2)} USD in your live account to request a payout.`
-      );
+      if (totalBonus > 0 && (liveBalance + totalBonus) >= MIN_WITHDRAWAL) {
+        setErrorMsg(
+          `Your withdrawable real balance is $${withdrawableBalance.toFixed(2)} USD. Your bonus balance of $${totalBonus.toFixed(2)} USD is strictly for trading and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`
+        );
+      } else {
+        setErrorMsg(
+          `Insufficient account balance! Your withdrawable live balance is $${withdrawableBalance.toFixed(
+            2
+          )} USD. You need at least $${MIN_WITHDRAWAL.toFixed(2)} USD in your live account to request a payout.`
+        );
+      }
       return;
     }
 
@@ -98,9 +112,9 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
       return;
     }
 
-    if (withdrawAmount > liveBalance) {
+    if (withdrawAmount > withdrawableBalance) {
       setErrorMsg(
-        `You cannot withdraw more than your available live balance ($${liveBalance.toFixed(2)} USD).`
+        `Cannot withdraw bonus funds. Bonus amount of $${totalBonus.toFixed(2)} USD is reserved strictly for trading. Your withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD.`
       );
       return;
     }
@@ -269,10 +283,15 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-950/70 to-[#0f1f18] border border-emerald-500/40 shadow-sm">
           <Wallet className="w-4 h-4 text-emerald-400" />
           <div className="text-right">
-            <div className="text-[9px] uppercase font-bold text-emerald-400/80">Available to Withdraw</div>
+            <div className="text-[9px] uppercase font-bold text-emerald-400/80">Withdrawable Cash</div>
             <div className="text-xs font-black text-emerald-300 font-mono">
-              ${liveBalance.toFixed(2)} USD
+              ${withdrawableBalance.toFixed(2)} USD
             </div>
+            {totalBonus > 0 && (
+              <div className="text-[9px] text-amber-400 font-bold">
+                +${totalBonus.toFixed(2)} Bonus (Trade Only)
+              </div>
+            )}
           </div>
         </div>
       </div>

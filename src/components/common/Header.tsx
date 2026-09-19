@@ -36,6 +36,7 @@ interface HeaderProps {
   onToggleAccountMode: (mode: AccountMode) => void;
   demoBalance: number;
   liveBalance: number;
+  bonusBalance?: number;
   onResetDemo: () => void;
   onOpenDeposit: () => void;
   onOpenWithdrawal: () => void;
@@ -55,6 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleAccountMode,
   demoBalance,
   liveBalance,
+  bonusBalance = 0,
   onResetDemo,
   onOpenDeposit,
   onOpenWithdrawal,
@@ -111,7 +113,8 @@ export const Header: React.FC<HeaderProps> = ({
     setIsSoundOn(newVal);
   };
 
-  const currentBalance = accountMode === 'DEMO' ? demoBalance : liveBalance;
+  const totalLiveTradingBalance = Number((liveBalance + (bonusBalance || 0)).toFixed(2));
+  const currentBalance = accountMode === 'DEMO' ? demoBalance : totalLiveTradingBalance;
 
   return (
     <header className="h-12 md:h-14 bg-[#0a0e17] border-b border-slate-800/80 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-40 relative">
@@ -318,8 +321,20 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="mt-2 text-base sm:text-lg font-black font-mono text-emerald-400">
-                  ${liveBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ${totalLiveTradingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
+                {bonusBalance > 0 && (
+                  <div className="mt-1.5 pt-1.5 border-t border-emerald-500/20 space-y-0.5 text-[10px] font-mono">
+                    <div className="flex justify-between text-slate-300">
+                      <span>Real Cash (Withdrawable):</span>
+                      <span className="text-emerald-400 font-bold">${liveBalance.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-amber-400 font-bold">
+                      <span>Trading Bonus (Trade Only):</span>
+                      <span>+${bonusBalance.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Quick info note */}

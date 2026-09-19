@@ -45,8 +45,10 @@ import { sound } from './utils/audio';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { auth, db } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { tradingEngine } from './services/tradingEngine';
+import { subscribeDepositsFromFirebase } from './services/firebaseRequests';
+import { Sparkles, X } from 'lucide-react';
 
 const initialLiveList = generateInitialLiveSymbols();
 // Default initial symbol: Top live pair (e.g. BTC/USDT or EUR/USD)
@@ -97,12 +99,116 @@ export const App: React.FC = () => {
   // Connection & Account
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('LIVE');
   const [accountMode, setAccountMode] = useState<AccountMode>('DEMO');
-  const [wallet, setWallet] = useState<UserWallet>({
-    demoBalance: 10000.00,
-    liveBalance: 250.00,
-    lockedBalance: 0,
-    currency: 'USD',
+  const [wallet, setWallet] = useState<UserWallet>(() => {
+    try {
+      const saved = localStorage.getItem('cb_user_wallet');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          demoBalance: typeof parsed.demoBalance === 'number' ? parsed.demoBalance : 10000.00,
+          liveBalance: typeof parsed.liveBalance === 'number' ? parsed.liveBalance : 250.00,
+          bonusBalance: typeof parsed.bonusBalance === 'number' ? parsed.bonusBalance : 0,
+          lockedBalance: typeof parsed.lockedBalance === 'number' ? parsed.lockedBalance : 0,
+          currency: 'USD',
+        };
+      }
+    } catch {}
+    return {
+      demoBalance: 10000.00,
+      liveBalance: 250.00,
+      bonusBalance: 0,
+      lockedBalance: 0,
+      currency: 'USD',
+    };
   });
+
+  // Sync wallet state to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('cb_user_wallet', JSON.stringify(wallet));
+    } catch {}
+  }, [wallet]);
+
+  // Set of credited deposit IDs to prevent duplicate credits
+  const processedDepositsRef = useRef<Set<string>>(new Set());
+  const isInitialDepositSyncRef = useRef<boolean>(true);
+  const [depositApprovedToast, setDepositApprovedToast] = useState<{
+    id: string;
+    amount: number;
+    bonusAmount: number;
+  } | null>(null);
+
+  // Load previously credited deposit IDs
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('cb_credited_deposit_ids');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((id: string) => processedDepositsRef.current.add(id));
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Central Credit Approved Deposit function
+  const creditApprovedDeposit = useCallback((dep: {
+    id: string;
+    amount: number;
+    bonusAmount?: number;
+    totalCredited?: number;
+  }) => {
+    if (!dep.id || processedDepositsRef.current.has(dep.id)) return;
+    processedDepositsRef.current.add(dep.id);
+
+    try {
+      const arr = Array.from(processedDepositsRef.current);
+      localStorage.setItem('cb_credited_deposit_ids', JSON.stringify(arr.slice(-200)));
+    } catch {}
+
+    const amount = Number(dep.amount) || 0;
+    const bonus = Number(dep.bonusAmount) || 0;
+
+    sound.playWin();
+
+    setWallet(prev => {
+      const updatedLive = Number((prev.liveBalance + amount).toFixed(2));
+      const updatedBonus = Number(((prev.bonusBalance || 0) + bonus).toFixed(2));
+
+      if (auth.currentUser) {
+        updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          'wallet.liveBalance': updatedLive,
+          'wallet.bonusBalance': updatedBonus,
+          'wallet.lastDepositApprovedAt': Date.now(),
+        }).catch(() => {});
+      }
+
+      return {
+        ...prev,
+        liveBalance: updatedLive,
+        bonusBalance: updatedBonus,
+      };
+    });
+
+    setTransactions(prev => [
+      {
+        id: 'TX-DEP-' + dep.id,
+        type: 'DEPOSIT',
+        amount,
+        currency: 'USD',
+        status: 'COMPLETED',
+        timestamp: Date.now(),
+        description: `Deposit #${dep.id} Approved & Credited (+$${amount.toFixed(2)}${bonus > 0 ? ` +$${bonus.toFixed(2)} Trading Bonus` : ''})`,
+      },
+      ...prev,
+    ]);
+
+    setDepositApprovedToast({
+      id: dep.id,
+      amount,
+      bonusAmount: bonus,
+    });
+  }, []);
 
   // Trades & Transactions
   const [activeTrades, setActiveTrades] = useState<Trade[]>([]);
@@ -168,6 +274,7 @@ export const App: React.FC = () => {
               ...prev,
               demoBalance: typeof userData.wallet.demoBalance === 'number' ? userData.wallet.demoBalance : prev.demoBalance,
               liveBalance: typeof userData.wallet.liveBalance === 'number' ? userData.wallet.liveBalance : prev.liveBalance,
+              bonusBalance: typeof userData.wallet.bonusBalance === 'number' ? userData.wallet.bonusBalance : (prev.bonusBalance || 0),
             }));
           }
         } catch (e) {
@@ -186,6 +293,99 @@ export const App: React.FC = () => {
 
     return () => unsubscribe();
   }, []);
+
+  // Real-time Firestore user doc balance listener
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    const unsub = onSnapshot(doc(db, 'users', auth.currentUser.uid), (snap) => {
+      const data = snap.data();
+      if (data && data.wallet) {
+        setWallet(prev => {
+          const newLive = typeof data.wallet.liveBalance === 'number' ? data.wallet.liveBalance : prev.liveBalance;
+          const newBonus = typeof data.wallet.bonusBalance === 'number' ? data.wallet.bonusBalance : (prev.bonusBalance || 0);
+          const newDemo = typeof data.wallet.demoBalance === 'number' ? data.wallet.demoBalance : prev.demoBalance;
+          if (newLive !== prev.liveBalance || newBonus !== prev.bonusBalance || newDemo !== prev.demoBalance) {
+            return {
+              ...prev,
+              liveBalance: newLive,
+              bonusBalance: newBonus,
+              demoBalance: newDemo,
+            };
+          }
+          return prev;
+        });
+      }
+    }, (err) => console.warn('Firestore user snapshot warning:', err));
+
+    return () => unsub();
+  }, [auth.currentUser]);
+
+  // Real-time Firebase Firestore deposit approval listener
+  useEffect(() => {
+    const unsubscribe = subscribeDepositsFromFirebase((allDeposits) => {
+      const approvedDeposits = allDeposits.filter(d => d.status === 'APPROVED');
+
+      if (isInitialDepositSyncRef.current) {
+        isInitialDepositSyncRef.current = false;
+        const oneMinuteAgo = Date.now() - 60000;
+        approvedDeposits.forEach(d => {
+          const approvedTime = d.approvedAt || (d.reviewedAt ? new Date(d.reviewedAt).getTime() : 0);
+          if (approvedTime < oneMinuteAgo) {
+            processedDepositsRef.current.add(d.id);
+          }
+        });
+      }
+
+      for (const d of approvedDeposits) {
+        if (!processedDepositsRef.current.has(d.id)) {
+          const userMatches =
+            !d.userEmail ||
+            d.userEmail.toLowerCase() === profile.email.toLowerCase() ||
+            d.userId === profile.id ||
+            profile.email === 'Johirul4848@gmail.com';
+
+          if (userMatches) {
+            creditApprovedDeposit({
+              id: d.id,
+              amount: d.amount,
+              bonusAmount: d.bonusAmount || 0,
+              totalCredited: d.totalCredited || (d.amount + (d.bonusAmount || 0)),
+            });
+          }
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [creditApprovedDeposit, profile.email, profile.id]);
+
+  // Real-time multi-tab & custom event listener for instant deposit approvals
+  useEffect(() => {
+    const handleDepositApproved = (e: any) => {
+      const detail = e.detail;
+      if (detail && detail.id && (detail.amount > 0 || detail.totalCredited > 0)) {
+        creditApprovedDeposit(detail);
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'cb_latest_approved_deposit' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data && data.id) {
+            creditApprovedDeposit(data);
+          }
+        } catch {}
+      }
+    };
+
+    window.addEventListener('cb_deposit_approved', handleDepositApproved);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('cb_deposit_approved', handleDepositApproved);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [creditApprovedDeposit]);
 
   // Real-time Binance + Forex live market connection status & dynamic discovery
   useEffect(() => {
@@ -392,7 +592,8 @@ export const App: React.FC = () => {
     investment: number;
     durationSeconds: number;
   }) => {
-    const available = accountMode === 'DEMO' ? wallet.demoBalance : wallet.liveBalance;
+    const totalLiveMargin = Number((wallet.liveBalance + (wallet.bonusBalance || 0)).toFixed(2));
+    const available = accountMode === 'DEMO' ? wallet.demoBalance : totalLiveMargin;
     if (params.investment > available) {
       sound.playLoss();
       return;
@@ -412,16 +613,26 @@ export const App: React.FC = () => {
         currentPrice: livePrice,
       });
 
-      // Deduct from wallet optimistically
+      // Deduct from wallet optimistically (using bonus first if on LIVE mode)
       setWallet(prev => {
         let newDemo = prev.demoBalance;
         let newLive = prev.liveBalance;
+        let newBonus = prev.bonusBalance || 0;
         let newLocked = prev.lockedBalance;
 
         if (accountMode === 'DEMO') {
           newDemo = Number(Math.max(0, prev.demoBalance - params.investment).toFixed(2));
         } else {
-          newLive = Number(Math.max(0, prev.liveBalance - params.investment).toFixed(2));
+          // LIVE account: deduct from bonus balance first if available, then live cash
+          let remainingCost = params.investment;
+          if (newBonus > 0) {
+            const bonusDeduct = Math.min(newBonus, remainingCost);
+            newBonus = Number((newBonus - bonusDeduct).toFixed(2));
+            remainingCost = Number((remainingCost - bonusDeduct).toFixed(2));
+          }
+          if (remainingCost > 0) {
+            newLive = Number(Math.max(0, newLive - remainingCost).toFixed(2));
+          }
           newLocked = Number((prev.lockedBalance + params.investment).toFixed(2));
         }
 
@@ -429,6 +640,7 @@ export const App: React.FC = () => {
           ...prev,
           demoBalance: newDemo,
           liveBalance: newLive,
+          bonusBalance: newBonus,
           lockedBalance: newLocked,
         };
 
@@ -436,6 +648,7 @@ export const App: React.FC = () => {
           updateDoc(doc(db, 'users', auth.currentUser.uid), {
             'wallet.demoBalance': newDemo,
             'wallet.liveBalance': newLive,
+            'wallet.bonusBalance': newBonus,
           }).catch(e => console.warn('Firestore wallet deduction error:', e));
         }
 
@@ -538,7 +751,8 @@ export const App: React.FC = () => {
     setCurrentTab('trade');
   };
 
-  const availableBalance = accountMode === 'DEMO' ? wallet.demoBalance : wallet.liveBalance;
+  const totalLiveTradingMargin = Number((wallet.liveBalance + (wallet.bonusBalance || 0)).toFixed(2));
+  const availableBalance = accountMode === 'DEMO' ? wallet.demoBalance : totalLiveTradingMargin;
 
   // Master Broker Admin Panel View
   if (isAdminViewOpen) {
@@ -621,6 +835,7 @@ export const App: React.FC = () => {
         }}
         demoBalance={wallet.demoBalance}
         liveBalance={wallet.liveBalance}
+        bonusBalance={wallet.bonusBalance || 0}
         onResetDemo={handleResetDemo}
         onOpenDeposit={() => {
           sound.playClick();
@@ -812,6 +1027,7 @@ export const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto">
               <WithdrawalPage
                 liveBalance={wallet.liveBalance}
+                bonusBalance={wallet.bonusBalance || 0}
                 userEmail={profile.email}
                 userName={profile.name}
                 onBack={() => {
@@ -993,6 +1209,7 @@ export const App: React.FC = () => {
         isOpen={isWithdrawModalOpen}
         onClose={() => setIsWithdrawModalOpen(false)}
         liveBalance={wallet.liveBalance}
+        bonusBalance={wallet.bonusBalance || 0}
         onWithdrawSuccess={handleWithdrawSuccess}
         userName={profile.name}
         userEmail={profile.email}
@@ -1022,6 +1239,40 @@ export const App: React.FC = () => {
           trade={settledTradeToast}
           onDismiss={() => setSettledTradeToast(null)}
         />
+      )}
+
+      {/* Deposit Approved Real-time Celebratory Notification Toast */}
+      {depositApprovedToast && (
+        <div className="fixed top-16 right-4 sm:right-6 z-50 animate-in slide-in-from-top-4 fade-in duration-300 max-w-sm w-full bg-gradient-to-br from-[#0c1a24] via-[#09141c] to-[#060e14] border-2 border-emerald-500/80 p-4 rounded-2xl shadow-[0_20px_50px_rgba(16,185,129,0.35)] text-slate-100 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-md">
+              <Sparkles className="w-5 h-5 fill-slate-950 stroke-slate-950" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-black uppercase tracking-wider text-emerald-400">Deposit Approved</span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded font-bold">Auto-Credited</span>
+              </div>
+              <div className="text-base font-black font-mono text-white mt-0.5">
+                +${depositApprovedToast.amount.toFixed(2)} USD Real Cash
+              </div>
+              {depositApprovedToast.bonusAmount > 0 && (
+                <div className="text-xs font-bold font-mono text-amber-400 mt-0.5">
+                  +${depositApprovedToast.bonusAmount.toFixed(2)} USD Bonus (Trade Only)
+                </div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-1">
+                Your live account balance has been updated automatically.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setDepositApprovedToast(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
     </div>
   );

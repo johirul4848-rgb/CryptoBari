@@ -1,4 +1,4 @@
-import { doc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc, onSnapshot, increment } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 
 export interface FirebaseDepositData {
@@ -248,6 +248,103 @@ export async function updateFirebaseRequestStatus(
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${id}`);
+    return false;
+  }
+}
+
+/**
+ * Approve a deposit request in Firebase Firestore and synchronize real-time crediting
+ */
+export async function approveDepositInFirebase(deposit: {
+  id: string;
+  amount: number;
+  bonusAmount?: number;
+  totalCredited?: number;
+  userId?: string;
+  userEmail?: string;
+  userName?: string;
+}): Promise<boolean> {
+  try {
+    const cleanId = deposit.id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'deposit_requests', cleanId);
+    const amount = Number(deposit.amount) || 0;
+    const bonusAmount = Number(deposit.bonusAmount) || 0;
+    const totalCredited = Number(deposit.totalCredited) || (amount + bonusAmount);
+
+    // 1. Update deposit request in Firestore
+    await updateDoc(docRef, {
+      status: 'APPROVED',
+      reviewedAt: new Date().toISOString(),
+      approvedAt: Date.now(),
+      credited: true,
+      amount,
+      bonusAmount,
+      totalCredited,
+    }).catch(async () => {
+      // In case doc needed merge or set
+      await setDoc(docRef, {
+        id: deposit.id,
+        status: 'APPROVED',
+        reviewedAt: new Date().toISOString(),
+        approvedAt: Date.now(),
+        credited: true,
+        amount,
+        bonusAmount,
+        totalCredited,
+        userEmail: deposit.userEmail || '',
+        userId: deposit.userId || '',
+      }, { merge: true });
+    });
+
+    // 2. If user document exists, increment live balance and bonus balance in Firestore
+    if (deposit.userId && !deposit.userId.startsWith('guest_')) {
+      try {
+        const userDocRef = doc(db, 'users', deposit.userId);
+        await updateDoc(userDocRef, {
+          'wallet.liveBalance': increment(amount),
+          'wallet.bonusBalance': increment(bonusAmount),
+          'wallet.lastDepositApprovedAt': Date.now(),
+        }).catch(() => {});
+      } catch (err) {
+        console.warn('Firestore user wallet increment note:', err);
+      }
+    }
+
+    // 3. Mirror to localStorage for instant same-browser & tab-to-tab sync
+    const approvalPayload = {
+      id: deposit.id,
+      amount,
+      bonusAmount,
+      totalCredited,
+      userId: deposit.userId,
+      userEmail: deposit.userEmail,
+      userName: deposit.userName,
+      timestamp: Date.now(),
+    };
+
+    try {
+      localStorage.setItem('cb_latest_approved_deposit', JSON.stringify(approvalPayload));
+
+      const sharedRaw = localStorage.getItem('cb_admin_shared_deposits');
+      if (sharedRaw) {
+        const arr = JSON.parse(sharedRaw);
+        const updated = arr.map((item: any) =>
+          item.id === deposit.id
+            ? { ...item, status: 'APPROVED', approvedAt: Date.now(), credited: true }
+            : item
+        );
+        localStorage.setItem('cb_admin_shared_deposits', JSON.stringify(updated));
+      }
+
+      window.dispatchEvent(new CustomEvent('cb_deposit_approved', { detail: approvalPayload }));
+      window.dispatchEvent(new CustomEvent('cb_deposits_updated'));
+    } catch {
+      // ignore
+    }
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `deposit_requests/${deposit.id}`);
     return false;
   }
 }

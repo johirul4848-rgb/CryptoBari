@@ -95,6 +95,7 @@ export interface Trade {
 export interface UserWallet {
   demoBalance: number;
   liveBalance: number;
+  bonusBalance?: number; // Non-withdrawable bonus exclusively for trading
   lockedBalance: number;
   currency: string;
 }
