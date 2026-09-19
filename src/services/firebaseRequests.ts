@@ -348,3 +348,153 @@ export async function approveDepositInFirebase(deposit: {
     return false;
   }
 }
+
+/**
+ * Persist user wallet state to Firestore user document so page refreshes never revert balance
+ */
+export async function syncUserWalletToFirebase(
+  userId: string | undefined,
+  walletUpdates: {
+    liveBalance?: number;
+    bonusBalance?: number;
+    demoBalance?: number;
+    lockedBalance?: number;
+  }
+): Promise<boolean> {
+  try {
+    const targetUid = userId || auth.currentUser?.uid;
+    if (!targetUid || targetUid.startsWith('guest_')) {
+      return false;
+    }
+    const userDocRef = doc(db, 'users', targetUid);
+    const updates: Record<string, any> = {};
+    if (typeof walletUpdates.liveBalance === 'number') {
+      updates['wallet.liveBalance'] = walletUpdates.liveBalance;
+    }
+    if (typeof walletUpdates.bonusBalance === 'number') {
+      updates['wallet.bonusBalance'] = walletUpdates.bonusBalance;
+    }
+    if (typeof walletUpdates.demoBalance === 'number') {
+      updates['wallet.demoBalance'] = walletUpdates.demoBalance;
+    }
+    if (typeof walletUpdates.lockedBalance === 'number') {
+      updates['wallet.lockedBalance'] = walletUpdates.lockedBalance;
+    }
+    updates['wallet.lastSyncedAt'] = Date.now();
+
+    await updateDoc(userDocRef, updates).catch(async () => {
+      await setDoc(userDocRef, { wallet: updates }, { merge: true });
+    });
+    return true;
+  } catch (error) {
+    console.warn('syncUserWalletToFirebase notice:', error);
+    return false;
+  }
+}
+
+/**
+ * Approve a withdrawal request in Firebase Firestore and ensure balance remains deducted
+ */
+export async function approveWithdrawalInFirebase(withdrawal: {
+  id: string;
+  amount: number;
+  userId?: string;
+  userEmail?: string;
+  userName?: string;
+}): Promise<boolean> {
+  try {
+    const cleanId = withdrawal.id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'withdrawal_requests', cleanId);
+    const amount = Number(withdrawal.amount) || 0;
+
+    await updateDoc(docRef, {
+      status: 'APPROVED',
+      reviewedAt: new Date().toISOString(),
+      processedAt: Date.now(),
+      amount,
+    }).catch(async () => {
+      await setDoc(docRef, {
+        id: withdrawal.id,
+        status: 'APPROVED',
+        reviewedAt: new Date().toISOString(),
+        processedAt: Date.now(),
+        amount,
+        userEmail: withdrawal.userEmail || '',
+        userId: withdrawal.userId || '',
+      }, { merge: true });
+    });
+
+    // Mirror to shared storage
+    try {
+      const sharedRaw = localStorage.getItem('cb_admin_shared_withdrawals');
+      if (sharedRaw) {
+        const arr = JSON.parse(sharedRaw);
+        const updated = arr.map((item: any) =>
+          item.id === withdrawal.id
+            ? { ...item, status: 'APPROVED', processedAt: Date.now() }
+            : item
+        );
+        localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+      }
+      window.dispatchEvent(new CustomEvent('cb_withdrawals_updated'));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `withdrawal_requests/${withdrawal.id}`);
+    return false;
+  }
+}
+
+/**
+ * Reject a withdrawal request in Firebase Firestore and refund trader's real balance
+ */
+export async function rejectWithdrawalInFirebase(withdrawal: {
+  id: string;
+  amount: number;
+  userId?: string;
+  reason?: string;
+}): Promise<boolean> {
+  try {
+    const cleanId = withdrawal.id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'withdrawal_requests', cleanId);
+    const amount = Number(withdrawal.amount) || 0;
+
+    await updateDoc(docRef, {
+      status: 'REJECTED',
+      reviewedAt: new Date().toISOString(),
+      rejectedReason: withdrawal.reason || 'Verification requirement',
+    });
+
+    // Refund live balance in Firestore if userId exists
+    if (withdrawal.userId && !withdrawal.userId.startsWith('guest_')) {
+      try {
+        const userDocRef = doc(db, 'users', withdrawal.userId);
+        await updateDoc(userDocRef, {
+          'wallet.liveBalance': increment(amount),
+        });
+      } catch (err) {
+        console.warn('Refund Firestore update notice:', err);
+      }
+    }
+
+    try {
+      const sharedRaw = localStorage.getItem('cb_admin_shared_withdrawals');
+      if (sharedRaw) {
+        const arr = JSON.parse(sharedRaw);
+        const updated = arr.map((item: any) =>
+          item.id === withdrawal.id
+            ? { ...item, status: 'REJECTED', rejectedReason: withdrawal.reason }
+            : item
+        );
+        localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+      }
+      window.dispatchEvent(new CustomEvent('cb_withdrawals_updated'));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `withdrawal_requests/${withdrawal.id}`);
+    return false;
+  }
+}

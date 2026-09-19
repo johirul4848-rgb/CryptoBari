@@ -46,6 +46,8 @@ import {
   subscribeWithdrawalsFromFirebase,
   updateFirebaseRequestStatus,
   approveDepositInFirebase,
+  approveWithdrawalInFirebase,
+  rejectWithdrawalInFirebase,
 } from '../../services/firebaseRequests';
 import {
   influencerService,
@@ -613,7 +615,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // 3. Approve Withdrawal Request
   const handleApproveWithdrawal = async (id: string) => {
     sound.playClick();
-    updateFirebaseRequestStatus('withdrawal_requests', id, 'APPROVED').catch(() => {});
+    const wth = withdrawals.find(w => w.id === id);
+    if (wth) {
+      approveWithdrawalInFirebase({
+        id,
+        amount: wth.amount,
+        userId: wth.userId,
+        userEmail: wth.userEmail,
+        userName: wth.userName,
+      }).catch(e => console.warn('approveWithdrawalInFirebase error:', e));
+    } else {
+      updateFirebaseRequestStatus('withdrawal_requests', id, 'APPROVED').catch(() => {});
+    }
+
     try {
       const res = await fetch(`/api/admin/withdrawals/${id}/approve`, { method: 'POST' });
       const data = await res.json();
@@ -655,7 +669,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleRejectWithdrawal = async (id: string) => {
     sound.playClick();
     const reason = window.prompt('Enter reason for withdrawal rejection:', 'Account KYC requirement or address format error') || 'Verification requirement';
-    updateFirebaseRequestStatus('withdrawal_requests', id, 'REJECTED', reason).catch(() => {});
+    const wth = withdrawals.find(w => w.id === id);
+    if (wth) {
+      rejectWithdrawalInFirebase({
+        id,
+        amount: wth.amount,
+        userId: wth.userId,
+        reason,
+      }).catch(e => console.warn('rejectWithdrawalInFirebase error:', e));
+    } else {
+      updateFirebaseRequestStatus('withdrawal_requests', id, 'REJECTED', reason).catch(() => {});
+    }
+
     try {
       const res = await fetch(`/api/admin/withdrawals/${id}/reject`, {
         method: 'POST',
@@ -1052,6 +1077,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return w.status === influencerFilter;
   });
 
+  // Live connected Treasury & Financial Ledger metrics (Real-time synchronization across Deposits, Withdrawals, and Influencer Commissions)
+  const liveApprovedDepositsTotal = deposits
+    .filter(d => d.status === 'APPROVED')
+    .reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
+
+  const liveApprovedWithdrawalsTotal = withdrawals
+    .filter(w => w.status === 'APPROVED')
+    .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
+
+  const liveInfluencerPayoutsTotal = influencerWithdrawals
+    .filter(w => w.status === 'APPROVED')
+    .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
+
+  const liveInfluencerCommissionsTotal = influencers
+    .reduce((acc, i) => acc + (Number(i.totalEarned) || 0), 0);
+
+  const totalVerifiedDeposits = liveApprovedDepositsTotal > 0 ? liveApprovedDepositsTotal : (financeData?.totalDeposits ?? 0);
+  const totalDispatchedPayouts = liveApprovedWithdrawalsTotal > 0 ? liveApprovedWithdrawalsTotal : (financeData?.dispatchedPayouts ?? 0);
+  const totalNetBalance = Math.max(0, parseFloat((totalVerifiedDeposits - totalDispatchedPayouts).toFixed(2)));
+  const totalReferralOutflow = Math.max(liveInfluencerPayoutsTotal, liveInfluencerCommissionsTotal, financeData?.referralCommissions ?? 0);
+  const finalNetProfitOrLoss = parseFloat((totalVerifiedDeposits - totalDispatchedPayouts - totalReferralOutflow).toFixed(2));
+  const isPlatformNetProfitable = finalNetProfitOrLoss >= 0;
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#070b14] text-slate-100 font-sans overflow-hidden select-none">
       {/* 1. TOP BROKER OPS BAR */}
@@ -1396,7 +1444,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192c] to-[#0d1322] border border-cyan-500/30 shadow-lg">
                   <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider block">Total Turnover Volume</span>
                   <div className="text-xl md:text-2xl font-black text-white font-mono mt-1">
-                    ${(financeData?.totalDeposits ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${totalVerifiedDeposits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-1 font-semibold">
                     <TrendingUp className="w-3.5 h-3.5" />
@@ -1406,8 +1454,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192c] to-[#0d1322] border border-emerald-500/30 shadow-lg">
                   <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">Platform Net House Margin</span>
-                  <div className="text-xl md:text-2xl font-black text-emerald-400 font-mono mt-1">
-                    {(financeData?.netProfitOrLoss ?? 0) >= 0 ? '+' : ''}${(financeData?.netProfitOrLoss ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  <div className={`text-xl md:text-2xl font-black font-mono mt-1 ${isPlatformNetProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {isPlatformNetProfitable ? '+' : ''}${finalNetProfitOrLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
                     Average payout: <span className="text-white font-mono font-bold">85.0%</span>
@@ -2158,7 +2206,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <ArrowDownCircle className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-white font-mono mt-2">
-                    ${(financeData?.totalDeposits ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${totalVerifiedDeposits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Verified Inflow (USDT & Binance)</p>
                 </div>
@@ -2170,7 +2218,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <ArrowUpCircle className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-amber-300 font-mono mt-2">
-                    −${(financeData?.dispatchedPayouts ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    −${totalDispatchedPayouts.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Honored trader withdrawals</p>
                 </div>
@@ -2182,7 +2230,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-bold">Dep − Payout</span>
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-white font-mono mt-2">
-                    ${(financeData?.totalBalanceAmount ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${totalNetBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Residual gross capital</p>
                 </div>
@@ -2194,33 +2242,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <Share2 className="w-3.5 h-3.5" />
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-rose-300 font-mono mt-2">
-                    −${(financeData?.referralCommissions ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    −${totalReferralOutflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Affiliate commission pay</p>
                 </div>
 
                 {/* 5. Net Profit or Loss */}
                 <div className={`p-4 rounded-2xl bg-gradient-to-br from-[#131a2e] to-[#0c1221] shadow-xl relative overflow-hidden border ${
-                  (financeData?.isProfit ?? true)
+                  isPlatformNetProfitable
                     ? 'border-emerald-500/60 ring-2 ring-emerald-500/30'
                     : 'border-rose-500/60 ring-2 ring-rose-500/30'
                 }`}>
                   <div className="text-[11px] font-bold uppercase tracking-wider flex items-center justify-between">
-                    <span className={(financeData?.isProfit ?? true) ? 'text-emerald-400' : 'text-rose-400'}>
+                    <span className={isPlatformNetProfitable ? 'text-emerald-400' : 'text-rose-400'}>
                       5. Final Net Profit/Loss
                     </span>
                     <span className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
-                      (financeData?.isProfit ?? true)
+                      isPlatformNetProfitable
                         ? 'bg-emerald-500/20 text-emerald-300'
                         : 'bg-rose-500/20 text-rose-300'
                     }`}>
-                      {(financeData?.isProfit ?? true) ? 'PROFIT' : 'LOSS'}
+                      {isPlatformNetProfitable ? 'PROFIT' : 'LOSS'}
                     </span>
                   </div>
                   <div className={`text-xl sm:text-2xl font-black font-mono mt-2 ${
-                    (financeData?.isProfit ?? true) ? 'text-emerald-400' : 'text-rose-400'
+                    isPlatformNetProfitable ? 'text-emerald-400' : 'text-rose-400'
                   }`}>
-                    {(financeData?.netProfitOrLoss ?? 0) >= 0 ? '+' : ''}${(financeData?.netProfitOrLoss ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {finalNetProfitOrLoss >= 0 ? '+' : ''}${finalNetProfitOrLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Net profit after all deductions</p>
                 </div>
@@ -2249,15 +2297,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
-                      {(financeData?.dailyReports || [
+                      {([
                         {
-                          date: 'Today',
-                          deposits: financeData?.totalDeposits ?? 0,
-                          dispatchedPayouts: financeData?.dispatchedPayouts ?? 0,
-                          netBalance: financeData?.totalBalanceAmount ?? 0,
-                          referralCommission: financeData?.referralCommissions ?? 0,
-                          netProfitLoss: financeData?.netProfitOrLoss ?? 0,
-                          status: (financeData?.isProfit ?? true) ? 'PROFIT' : 'LOSS',
+                          date: 'Today (' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')',
+                          deposits: totalVerifiedDeposits,
+                          dispatchedPayouts: totalDispatchedPayouts,
+                          netBalance: totalNetBalance,
+                          referralCommission: totalReferralOutflow,
+                          netProfitLoss: finalNetProfitOrLoss,
+                          status: isPlatformNetProfitable ? 'PROFIT' : 'LOSS',
                         },
                       ]).map((row: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition">

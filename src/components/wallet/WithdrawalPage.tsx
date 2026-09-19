@@ -187,6 +187,9 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
           // ignore
         }
 
+        // Forfeit promotional bonus funds upon withdrawal
+        influencerService.forfeitPromoBonus();
+
         onWithdrawSuccess(withdrawAmount, 'Binance Pay', receiverBinanceId.trim());
       } else {
         setErrorMsg(data.error || 'Failed to submit withdrawal request.');
@@ -194,6 +197,8 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
     } catch {
       // Offline fallback
       sound.playWin();
+      // Forfeit promotional bonus funds upon withdrawal
+      influencerService.forfeitPromoBonus();
       const mockRecord = {
         id: 'WTH-' + Math.floor(100000 + Math.random() * 900000),
         userName,

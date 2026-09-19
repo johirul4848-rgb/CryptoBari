@@ -1465,27 +1465,33 @@ async function startServer() {
   });
 
   // 7. Finance & In-depth Audit (Deposit - Payouts = Net Balance, - Referral = Net Profit/Loss)
-  // Account starts clean from 0 as requested
+  // Real-time connected across Deposits, Trader Withdrawals, and Influencer Commissions
   app.get('/api/admin/finance', (req, res) => {
     const totalDeposits = depositRequests
       .filter(d => d.status === 'APPROVED')
-      .reduce((acc, d) => acc + d.amount, 0);
+      .reduce((acc, d) => acc + (Number(d.amount) || 0), 0);
 
     const dispatchedPayouts = withdrawalRequests
       .filter(w => w.status === 'APPROVED')
-      .reduce((acc, w) => acc + w.amount, 0);
+      .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
 
-    // Total Deposits - Dispatched Payouts = Total Gross Balance (Starts from 0.00)
-    const totalBalanceAmount = totalDeposits - dispatchedPayouts;
+    const influencerPayouts = influencerWithdrawals
+      .filter(w => w.status === 'APPROVED')
+      .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
 
-    // Total Referral Commission
-    const referralCommissions = 0.00;
+    const influencerCommissions = influencers
+      .reduce((acc, i) => acc + (Number(i.totalEarned) || 0), 0);
 
-    // Net Profit or Loss = (Total Deposits - Dispatched Payouts) - Referral Commission
-    const netProfitOrLoss = totalBalanceAmount - referralCommissions;
+    const referralCommissions = Math.max(influencerCommissions, influencerPayouts);
+
+    // Total Deposits - Dispatched Payouts = Net Capital Balance
+    const totalBalanceAmount = Math.max(0, parseFloat((totalDeposits - dispatchedPayouts).toFixed(2)));
+
+    // Net House Margin / Profit = Net Balance - Referral Commissions
+    const netProfitOrLoss = parseFloat((totalDeposits - dispatchedPayouts - referralCommissions).toFixed(2));
     const isProfit = netProfitOrLoss >= 0;
 
-    // Daily breakdown for Admin (Starts clean from real live transactions)
+    // Daily breakdown for Admin (Live synchronized)
     const dailyReports = [
       {
         date: 'Today (' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')',
@@ -1505,8 +1511,8 @@ async function startServer() {
       referralCommissions,
       netProfitOrLoss,
       status: isProfit ? 'PROFIT' : 'LOSS',
-      pendingDepositsVolume: depositRequests.filter(d => d.status === 'PENDING').reduce((acc, d) => acc + d.amount, 0),
-      pendingWithdrawalsVolume: withdrawalRequests.filter(w => w.status === 'PENDING').reduce((acc, w) => acc + w.amount, 0),
+      pendingDepositsVolume: depositRequests.filter(d => d.status === 'PENDING').reduce((acc, d) => acc + (Number(d.amount) || 0), 0),
+      pendingWithdrawalsVolume: withdrawalRequests.filter(w => w.status === 'PENDING').reduce((acc, w) => acc + (Number(w.amount) || 0), 0),
       reserveFund: totalBalanceAmount,
       dailyReports,
     });

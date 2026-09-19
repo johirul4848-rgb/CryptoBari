@@ -48,6 +48,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { tradingEngine } from './services/tradingEngine';
 import { subscribeDepositsFromFirebase } from './services/firebaseRequests';
+import { influencerService } from './services/influencerService';
 import { Sparkles, X } from 'lucide-react';
 
 const initialLiveList = generateInitialLiveSymbols();
@@ -450,11 +451,14 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Fetch initial wallet state from server
+  // Fetch initial wallet state from server only if no locally saved wallet exists
   useEffect(() => {
-    apiService.fetchWallet().then(w => {
-      if (w) setWallet(w);
-    }).catch(() => {});
+    const saved = localStorage.getItem('cb_user_wallet');
+    if (!saved) {
+      apiService.fetchWallet().then(w => {
+        if (w) setWallet(w);
+      }).catch(() => {});
+    }
   }, []);
 
   // Subscribe to tradingEngine for live trades synchronization and authoritative settlements
@@ -613,7 +617,7 @@ export const App: React.FC = () => {
         currentPrice: livePrice,
       });
 
-      // Deduct from wallet optimistically (using bonus first if on LIVE mode)
+      // Deduct from wallet optimistically (first real balance, then bonus)
       setWallet(prev => {
         let newDemo = prev.demoBalance;
         let newLive = prev.liveBalance;
@@ -623,15 +627,15 @@ export const App: React.FC = () => {
         if (accountMode === 'DEMO') {
           newDemo = Number(Math.max(0, prev.demoBalance - params.investment).toFixed(2));
         } else {
-          // LIVE account: deduct from bonus balance first if available, then live cash
-          let remainingCost = params.investment;
-          if (newBonus > 0) {
-            const bonusDeduct = Math.min(newBonus, remainingCost);
-            newBonus = Number((newBonus - bonusDeduct).toFixed(2));
-            remainingCost = Number((remainingCost - bonusDeduct).toFixed(2));
-          }
-          if (remainingCost > 0) {
-            newLive = Number(Math.max(0, newLive - remainingCost).toFixed(2));
+          // LIVE account: first deduct from real balance (newLive), and only when real cash is exhausted, use bonus
+          let cost = params.investment;
+          if (newLive >= cost) {
+            newLive = Number((newLive - cost).toFixed(2));
+          } else {
+            const fromLive = newLive;
+            const remainingCost = Number((cost - fromLive).toFixed(2));
+            newLive = 0;
+            newBonus = Math.max(0, Number((newBonus - remainingCost).toFixed(2)));
           }
           newLocked = Number((prev.lockedBalance + params.investment).toFixed(2));
         }
@@ -643,6 +647,11 @@ export const App: React.FC = () => {
           bonusBalance: newBonus,
           lockedBalance: newLocked,
         };
+
+        // Persist to localStorage immediately
+        try {
+          localStorage.setItem('cb_user_wallet', JSON.stringify(newWallet));
+        } catch {}
 
         if (auth.currentUser) {
           updateDoc(doc(db, 'users', auth.currentUser.uid), {
@@ -694,10 +703,41 @@ export const App: React.FC = () => {
 
   // Handle user withdraw submission via Binance Pay
   const handleWithdrawSuccess = (amount: number, method: string, address: string) => {
-    setWallet(prev => ({
-      ...prev,
-      liveBalance: Math.max(0, prev.liveBalance - amount),
-    }));
+    // Forfeit promotional bonus funds upon withdrawal as required
+    influencerService.forfeitPromoBonus();
+
+    setWallet(prev => {
+      const newLive = Math.max(0, Number((prev.liveBalance - amount).toFixed(2)));
+      const newBonus = 0; // Promotional bonus is automatically wiped upon withdrawal
+      const updatedWallet: UserWallet = {
+        ...prev,
+        liveBalance: newLive,
+        bonusBalance: newBonus,
+      };
+
+      // Persist to localStorage immediately
+      try {
+        localStorage.setItem('cb_user_wallet', JSON.stringify(updatedWallet));
+      } catch {}
+
+      // Persist to Firestore immediately so refresh never reverts balance
+      if (auth.currentUser) {
+        updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          'wallet.liveBalance': newLive,
+          'wallet.bonusBalance': 0,
+          'wallet.lastWithdrawalRequestedAt': Date.now(),
+        }).catch(e => console.warn('Firestore withdrawal balance update error:', e));
+      }
+
+      return updatedWallet;
+    });
+
+    // Also inform backend server
+    fetch('/api/wallet/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, address, method }),
+    }).catch(() => {});
 
     setTransactions(prev => [
       {
