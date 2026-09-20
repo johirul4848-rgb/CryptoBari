@@ -30,6 +30,7 @@ interface DepositModalProps {
   onDepositSuccess: (amount: number, method: string, binanceId: string, txHash: string) => void;
   userEmail?: string;
   userName?: string;
+  initialPromoCode?: string;
 }
 
 export const DepositModal: React.FC<DepositModalProps> = ({
@@ -38,6 +39,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   onDepositSuccess,
   userEmail = 'johirul4848@gmail.com',
   userName = 'Johirul Islam',
+  initialPromoCode,
 }) => {
   const [depositAmount, setDepositAmount] = useState<number>(50);
   const [senderBinanceId, setSenderBinanceId] = useState<string>('');
@@ -54,8 +56,14 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
   const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
 
+  React.useEffect(() => {
+    if (isOpen && initialPromoCode) {
+      handleActivatePromo(initialPromoCode);
+    }
+  }, [isOpen, initialPromoCode]);
+
   // Handle promo code activation
-  const handleActivatePromo = (codeToActivate?: string) => {
+  const handleActivatePromo = async (codeToActivate?: string) => {
     sound.playClick();
     const targetCode = (codeToActivate || promoCodeInput).trim().toUpperCase();
     if (!targetCode) {
@@ -64,7 +72,14 @@ export const DepositModal: React.FC<DepositModalProps> = ({
       return;
     }
 
-    const validation = influencerService.validatePromoCode(targetCode);
+    // Try async resolution with fallback to sync
+    let validation = influencerService.validatePromoCode(targetCode);
+    if (!validation.valid) {
+      try {
+        validation = await influencerService.validatePromoCodeAsync(targetCode);
+      } catch {}
+    }
+
     if (validation.valid) {
       sound.playWin();
       setActivePromoCode(validation.code);

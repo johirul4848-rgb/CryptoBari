@@ -48,6 +48,15 @@ import {
   approveDepositInFirebase,
   approveWithdrawalInFirebase,
   rejectWithdrawalInFirebase,
+  subscribeInfluencersFromFirebase,
+  saveInfluencerToFirebase,
+  subscribeNoticesFromFirebase,
+  saveNoticeToFirebase,
+  deleteNoticeFromFirebase,
+  subscribeSupportTicketsFromFirebase,
+  saveSupportTicketToFirebase,
+  addMessageToTicketInFirebase,
+  updateTicketStatusInFirebase,
 } from '../../services/firebaseRequests';
 import {
   influencerService,
@@ -57,6 +66,7 @@ import {
   generateShortPassword,
   generateShortPromoCode,
 } from '../../services/influencerService';
+import { referralService } from '../../services/referralService';
 
 export interface OtcPairItem {
   id: string;
@@ -401,6 +411,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       loadAdminData();
     });
 
+    const unsubRef = referralService.subscribe(() => {
+      loadAdminData();
+    });
+
     // Real-time Firestore subscriptions for instant globally synchronized updates
     const unsubFbDeposits = subscribeDepositsFromFirebase(() => {
       loadAdminData();
@@ -410,8 +424,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       loadAdminData();
     });
 
+    const unsubFbInfluencers = subscribeInfluencersFromFirebase((fireInfs) => {
+      if (Array.isArray(fireInfs) && fireInfs.length > 0) {
+        setInfluencers(prev => {
+          const map = new Map<string, InfluencerProfile>();
+          prev.forEach(i => map.set(i.id, i));
+          fireInfs.forEach(i => map.set(i.id, { ...map.get(i.id), ...i }));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    const unsubFbNotices = subscribeNoticesFromFirebase((fireNotices) => {
+      if (Array.isArray(fireNotices) && fireNotices.length > 0) {
+        setNotices(fireNotices.filter((n: any) => n.active !== false));
+      }
+    });
+
+    const unsubFbSupport = subscribeSupportTicketsFromFirebase((fireTickets) => {
+      if (Array.isArray(fireTickets) && fireTickets.length > 0) {
+        setSupportTickets(fireTickets);
+      }
+    });
+
     window.addEventListener('cb_deposits_updated', handleDataUpdated);
     window.addEventListener('cb_withdrawals_updated', handleDataUpdated);
+    window.addEventListener('cb_notices_updated', handleDataUpdated);
     window.addEventListener('storage', handleDataUpdated);
 
     // Periodic safety poll every 8 seconds as well
@@ -421,11 +459,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     return () => {
       unsubInf();
+      unsubRef();
       unsubFbDeposits();
       unsubFbWithdrawals();
+      unsubFbInfluencers();
+      unsubFbNotices();
+      unsubFbSupport();
       clearInterval(interval);
       window.removeEventListener('cb_deposits_updated', handleDataUpdated);
       window.removeEventListener('cb_withdrawals_updated', handleDataUpdated);
+      window.removeEventListener('cb_notices_updated', handleDataUpdated);
       window.removeEventListener('storage', handleDataUpdated);
     };
   }, []);
@@ -462,13 +505,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Admin reply to support ticket
-  const handleSendAdminSupportReply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminReplyText.trim() || !selectedTicketId) return;
+  // Admin reply to support ticket (with real-time Firestore sync & quick templates)
+  const handleSendAdminSupportReply = async (e?: React.FormEvent, customReply?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = (customReply || adminReplyText).trim();
+    if (!textToSend || !selectedTicketId) return;
     sound.playClick();
-    const textToSend = adminReplyText.trim();
     setAdminReplyText('');
+
+    const newMsg = {
+      id: 'MSG-' + Math.floor(100000 + Math.random() * 900000),
+      sender: 'support' as const,
+      text: textToSend,
+      timestamp: Date.now(),
+    };
+
+    // Instant local state update
+    setSupportTickets(prev =>
+      prev.map(t =>
+        t.id === selectedTicketId
+          ? { ...t, messages: [...(t.messages || []), newMsg], status: 'IN_PROGRESS' }
+          : t
+      )
+    );
+
+    // Synchronize to Firestore in real-time
+    await addMessageToTicketInFirebase(selectedTicketId, newMsg).catch(() => {});
+
     try {
       const res = await fetch(`/api/support/tickets/${selectedTicketId}/messages`, {
         method: 'POST',
@@ -479,28 +542,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }),
       });
       if (res.ok) {
-        const updated = await res.json();
-        setSupportTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
-        showNotification('Support reply sent to user!');
+        showNotification('Support reply sent to trader!');
       }
     } catch {
       // ignore
     }
   };
 
-  // Update support ticket status
+  // Update support ticket status (with real-time Firestore sync)
   const handleUpdateTicketStatus = async (ticketId: string, status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED') => {
     sound.playClick();
+    setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status } : t));
+    await updateTicketStatusInFirebase(ticketId, status).catch(() => {});
     try {
-      const res = await fetch(`/api/support/tickets/${ticketId}/status`, {
+      await fetch(`/api/support/tickets/${ticketId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (res.ok) {
-        setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status } : t));
-        showNotification(`Ticket marked as ${status}`);
-      }
+      showNotification(`Ticket marked as ${status}`);
     } catch {
       // ignore
     }

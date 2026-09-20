@@ -32,6 +32,7 @@ interface DepositPageProps {
   userEmail?: string;
   userName?: string;
   liveBalance?: number;
+  initialPromoCode?: string;
 }
 
 interface BinanceSettings {
@@ -47,6 +48,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   userEmail = 'johirul4848@gmail.com',
   userName = 'Johirul Islam',
   liveBalance = 0,
+  initialPromoCode,
 }) => {
   const [depositAmount, setDepositAmount] = useState<number>(50);
   const [customAmountInput, setCustomAmountInput] = useState<string>('50');
@@ -62,6 +64,12 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   const [copiedGatewayId, setCopiedGatewayId] = useState(false);
   const [confirmationModalData, setConfirmationModalData] = useState<ConfirmationModalData | null>(null);
   const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (initialPromoCode) {
+      handleActivatePromo(initialPromoCode);
+    }
+  }, [initialPromoCode]);
 
   // Dynamic Binance Gateway settings
   const [gatewaySettings, setGatewaySettings] = useState<BinanceSettings>({
@@ -128,7 +136,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   };
 
   // Promo code activation handler
-  const handleActivatePromo = (codeToActivate?: string) => {
+  const handleActivatePromo = async (codeToActivate?: string) => {
     sound.playClick();
     const targetCode = (codeToActivate || promoCodeInput).trim().toUpperCase();
     if (!targetCode) {
@@ -137,7 +145,13 @@ export const DepositPage: React.FC<DepositPageProps> = ({
       return;
     }
 
-    const validation = influencerService.validatePromoCode(targetCode);
+    let validation = influencerService.validatePromoCode(targetCode);
+    if (!validation.valid) {
+      try {
+        validation = await influencerService.validatePromoCodeAsync(targetCode);
+      } catch {}
+    }
+
     if (validation.valid) {
       sound.playWin();
       setActivePromoCode(validation.code);

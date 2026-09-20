@@ -88,6 +88,45 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "symbol", "direction", "investment", "result", "status", "createdAt"]
+    },
+    "InfluencerProfile": {
+      "title": "InfluencerProfile",
+      "description": "Influencer and referral partner account with promo codes and commissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "password": { "type": "string", "maxLength": 128 },
+        "promoCode": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "country": { "type": "string", "maxLength": 64 },
+        "binanceId": { "type": "string", "maxLength": 64 },
+        "availableBalance": { "type": "number" },
+        "totalEarned": { "type": "number" },
+        "totalWithdrawn": { "type": "number" },
+        "totalVolumeGenerated": { "type": "number" },
+        "referralCount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "promoCode", "name", "email", "binanceId"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Real-time live customer support tickets and conversation threads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 256 },
+        "category": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["OPEN", "RESOLVED", "WAITING"] },
+        "priority": { "type": "string", "enum": ["NORMAL", "HIGH", "URGENT"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "subject", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -110,6 +149,14 @@
     "/trades/{tradeId}": {
       "schema": "TradeLog",
       "description": "Historic trade settlement records"
+    },
+    "/influencers/{influencerId}": {
+      "schema": "InfluencerProfile",
+      "description": "Influencer and referral partner profiles with promo codes"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Live support chat tickets and user inquiries"
     }
   }
 }

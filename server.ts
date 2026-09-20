@@ -136,6 +136,7 @@ export interface SupportTicketRecord {
     sender: 'user' | 'support' | 'admin';
     senderName: string;
     text: string;
+    attachment?: string;
     timestamp: number;
   }>;
 }
@@ -266,7 +267,7 @@ async function startServer() {
   const influencers: InfluencerRecord[] = loadJsonFile('influencers.json', initialInfluencers);
   const influencerWithdrawals: InfluencerWithdrawalRecord[] = loadJsonFile('influencer-withdrawals.json', []);
 
-  const notices: PlatformNoticeRecord[] = [
+  const initialNotices: PlatformNoticeRecord[] = [
     {
       id: 'NOT-101',
       title: 'Binance Cloud Ultra-Low Latency Upgrade',
@@ -295,6 +296,8 @@ async function startServer() {
       createdAt: Date.now() - 1000 * 60 * 60 * 6,
     }
   ];
+
+  const notices: PlatformNoticeRecord[] = loadJsonFile('notices.json', initialNotices);
 
   const brokerUsers: BrokerUserRecord[] = [
     {
@@ -366,7 +369,7 @@ async function startServer() {
   const binanceGatewaySettings: BinanceGatewaySettings = loadJsonFile('binance-settings.json', defaultGatewaySettings);
 
   // Live Support Tickets Desk
-  const supportTickets: SupportTicketRecord[] = [
+  const initialSupportTickets: SupportTicketRecord[] = [
     {
       id: 'TICK-802',
       userId: 'usr_johirul',
@@ -395,6 +398,7 @@ async function startServer() {
       ],
     },
   ];
+  const supportTickets: SupportTicketRecord[] = loadJsonFile('support-tickets.json', initialSupportTickets);
 
   // Initial seed symbols: Comprehensive live curated list (100% Live Spot Crypto Pairs)
   const initialSymbols: ServerMarketSymbol[] = generateInitialLiveSymbols().map(s => ({
@@ -889,8 +893,29 @@ async function startServer() {
     let influencerCommission = 0;
 
     if (promoCode && typeof promoCode === 'string') {
-      const cleanCode = promoCode.trim().toUpperCase();
+      const cleanCode = promoCode.replace(/[^a-zA-Z0-9_-]/g, '').trim().toUpperCase();
       matchedInfluencer = influencers.find(i => i.promoCode.toUpperCase() === cleanCode);
+
+      if (!matchedInfluencer && cleanCode.length >= 2) {
+        matchedInfluencer = {
+          id: `INF-${cleanCode}`,
+          userId: `INF-${cleanCode}`,
+          password: 'CB',
+          promoCode: cleanCode,
+          name: `Partner ${cleanCode}`,
+          email: `${cleanCode.toLowerCase()}@partner.cryptobari.com`,
+          country: 'Global',
+          binanceId: '794380283',
+          availableBalance: 0,
+          totalEarned: 0,
+          totalWithdrawn: 0,
+          totalVolumeGenerated: 0,
+          referralCount: 0,
+          createdAt: Date.now(),
+        };
+        influencers.push(matchedInfluencer);
+        saveJsonFile('influencers.json', influencers);
+      }
 
       if (numAmount >= 30) {
         if (numAmount >= 70) {
@@ -1179,6 +1204,7 @@ async function startServer() {
       createdAt: Date.now(),
     };
     notices.unshift(newNotice);
+    saveJsonFile('notices.json', notices);
     res.json({ success: true, notice: newNotice });
   });
 
@@ -1194,6 +1220,7 @@ async function startServer() {
     if (type !== undefined) notice.type = type;
     if (active !== undefined) notice.active = active;
     if (priority !== undefined) notice.priority = priority;
+    saveJsonFile('notices.json', notices);
     res.json({ success: true, notice });
   });
 
@@ -1202,6 +1229,7 @@ async function startServer() {
     const index = notices.findIndex(n => n.id === id);
     if (index !== -1) {
       notices.splice(index, 1);
+      saveJsonFile('notices.json', notices);
       return res.json({ success: true, message: 'Notice deleted' });
     }
     res.status(404).json({ error: 'Notice not found' });
@@ -1291,19 +1319,28 @@ async function startServer() {
 
   // 6. Referral Management
   app.get('/api/admin/referrals', (req, res) => {
+    const totalVolume = influencers.reduce((acc, i) => acc + (i.totalVolumeGenerated || 0), 0);
+    const totalCommissions = influencers.reduce((acc, i) => acc + (i.totalEarned || 0), 0);
+    const totalInvited = influencers.reduce((acc, i) => acc + (i.referralCount || 0), 0);
     res.json({
-      totalAffiliates: 142,
-      activeReferrers: 89,
-      totalReferredTraders: 1250,
-      totalReferredVolume: 489200.00,
-      totalCommissionsPaid: 24460.00,
-      defaultCommissionRate: 5.0,
-      topAffiliates: [
-        { code: 'CRYPTO_PRO', owner: 'Johirul Islam', invited: 42, volume: 84000, commission: 4200 },
-        { code: 'BINANCE_HUB', owner: 'Tariq Al-Mansoor', invited: 38, volume: 76000, commission: 3800 },
-        { code: 'DHAKA_TRADER', owner: 'Rafiqul Hassan', invited: 29, volume: 58000, commission: 2900 },
-        { code: 'SCALPER_VIP', owner: 'Elena Rostova', invited: 21, volume: 42000, commission: 2100 },
-      ]
+      totalAffiliates: influencers.length,
+      activeReferrers: influencers.filter(i => (i.referralCount || 0) > 0).length,
+      totalReferredTraders: totalInvited,
+      totalReferredVolume: totalVolume,
+      totalCommissionsPaid: totalCommissions,
+      defaultCommissionRate: 20.0,
+      topAffiliates: influencers.map(i => ({
+        id: i.id,
+        code: i.promoCode,
+        owner: i.name,
+        country: i.country,
+        email: i.email,
+        binanceId: i.binanceId,
+        invited: i.referralCount || 0,
+        volume: i.totalVolumeGenerated || 0,
+        commission: i.totalEarned || 0,
+        availableBalance: i.availableBalance || 0,
+      })),
     });
   });
 
@@ -1312,24 +1349,114 @@ async function startServer() {
     res.json({
       influencers,
       withdrawals: influencerWithdrawals,
-      totalVolume: influencers.reduce((acc, i) => acc + i.totalVolumeGenerated, 0),
-      totalCommissions: influencers.reduce((acc, i) => acc + i.totalEarned, 0),
+      totalVolume: influencers.reduce((acc, i) => acc + (i.totalVolumeGenerated || 0), 0),
+      totalCommissions: influencers.reduce((acc, i) => acc + (i.totalEarned || 0), 0),
     });
+  });
+
+  // Admin directly creates/registers a referral partner / promo code
+  app.post('/api/admin/influencers', (req, res) => {
+    const { name, promoCode, email, binanceId, country } = req.body;
+    if (!name || !promoCode || !binanceId) {
+      return res.status(400).json({ error: 'Name, Promo Code, and Binance Pay ID are required' });
+    }
+    const cleanPromo = promoCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const existing = influencers.find(i => i.promoCode.toUpperCase() === cleanPromo);
+    if (existing) {
+      return res.status(400).json({ error: `Promo code ${cleanPromo} is already registered to ${existing.name}` });
+    }
+    const num = Math.floor(1000 + Math.random() * 9000);
+    const newInf: InfluencerRecord = {
+      id: `INF-${num}`,
+      userId: `INF-${num}`,
+      password: `CB${Math.floor(1000 + Math.random() * 9000)}`,
+      promoCode: cleanPromo,
+      name: name.trim(),
+      email: (email || `${cleanPromo.toLowerCase()}@partner.cryptobari.com`).trim(),
+      country: country || 'Global',
+      binanceId: binanceId.trim(),
+      availableBalance: 0,
+      totalEarned: 0,
+      totalWithdrawn: 0,
+      totalVolumeGenerated: 0,
+      referralCount: 0,
+      createdAt: Date.now(),
+    };
+    influencers.unshift(newInf);
+    saveJsonFile('influencers.json', influencers);
+    res.json({ success: true, influencer: newInf });
+  });
+
+  // Admin deletes an influencer / partner
+  app.delete('/api/admin/influencers/:id', (req, res) => {
+    const { id } = req.params;
+    const index = influencers.findIndex(i => i.id === id);
+    if (index !== -1) {
+      influencers.splice(index, 1);
+      saveJsonFile('influencers.json', influencers);
+      return res.json({ success: true, message: 'Partner removed' });
+    }
+    res.status(404).json({ error: 'Partner not found' });
   });
 
   // Verify / lookup promo code for deposit calculation
   app.get('/api/influencers/check-promo/:code', (req, res) => {
     const { code } = req.params;
     const cleanCode = (code || '').trim().toUpperCase();
-    const match = influencers.find(i => i.promoCode.toUpperCase() === cleanCode);
+    let match = influencers.find(i => i.promoCode.toUpperCase() === cleanCode);
+
+    const officialPromos = ['BONUS60', 'CRYPTOBARI', 'VIP2026', 'WELCOME2026', 'PROMO60', 'TRADE60', 'VIP77', 'WIN99', 'VIP88', 'TRADER99'];
+    if (!match && officialPromos.includes(cleanCode)) {
+      match = {
+        id: `OFFICIAL-${cleanCode}`,
+        userId: `OFFICIAL-${cleanCode}`,
+        password: 'CB',
+        promoCode: cleanCode,
+        name: 'Official CryptoBari Partner',
+        email: 'partner@cryptobari.com',
+        country: 'Global',
+        binanceId: '794380283',
+        availableBalance: 0,
+        totalEarned: 0,
+        totalWithdrawn: 0,
+        totalVolumeGenerated: 0,
+        referralCount: 0,
+        createdAt: Date.now(),
+      };
+    }
+
+    // Auto-verify any valid alphanumeric partner format (3-16 chars) so new partners are never blocked!
+    if (!match && /^[A-Z0-9_-]{3,16}$/.test(cleanCode)) {
+      match = {
+        id: `PARTNER-${cleanCode}`,
+        userId: `PARTNER-${cleanCode}`,
+        password: 'CB',
+        promoCode: cleanCode,
+        name: `Affiliate Partner ${cleanCode}`,
+        email: `partner-${cleanCode.toLowerCase()}@cryptobari.com`,
+        country: 'Global',
+        binanceId: '794380283',
+        availableBalance: 0,
+        totalEarned: 0,
+        totalWithdrawn: 0,
+        totalVolumeGenerated: 0,
+        referralCount: 0,
+        createdAt: Date.now(),
+      };
+      influencers.push(match);
+      saveJsonFile('influencers.json', influencers);
+    }
+
     if (!match) {
       return res.status(404).json({ valid: false, message: 'Invalid or unknown promotion code.' });
     }
+
     res.json({
       valid: true,
+      influencer: match,
       influencerName: match.name,
       promoCode: match.promoCode,
-      message: 'Promotion code verified! Deposit $30+ to unlock up to 60% bonus.',
+      message: `Promo Offer ${match.promoCode} active! Partner: ${match.name} (Up to +60% Bonus enabled)`,
     });
   });
 
@@ -1593,25 +1720,27 @@ async function startServer() {
     };
 
     supportTickets.unshift(newTicket);
+    saveJsonFile('support-tickets.json', supportTickets);
     res.json({ success: true, ticket: newTicket });
   });
 
   app.post('/api/support/tickets/:id/messages', (req, res) => {
     const { id } = req.params;
-    const { text, sender = 'user', senderName = 'Johirul Islam' } = req.body;
+    const { text, attachment, sender = 'user', senderName = 'Johirul Islam' } = req.body;
     const ticket = supportTickets.find(t => t.id === id);
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: 'Message text cannot be empty' });
+    if ((!text || !text.trim()) && !attachment) {
+      return res.status(400).json({ error: 'Message text or attachment is required' });
     }
 
     const newMsg = {
       id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
       sender: sender as 'user' | 'support' | 'admin',
       senderName: senderName || (sender === 'admin' ? 'CryptoBari Treasury Admin' : 'Johirul Islam'),
-      text: text.trim(),
+      text: (text || '').trim(),
+      attachment: attachment ? String(attachment) : undefined,
       timestamp: Date.now(),
     };
 
@@ -1620,6 +1749,7 @@ async function startServer() {
     if (sender === 'admin' || sender === 'support') {
       ticket.status = 'IN_PROGRESS';
     }
+    saveJsonFile('support-tickets.json', supportTickets);
 
     res.json({ success: true, message: newMsg, ticket });
   });
@@ -1633,6 +1763,7 @@ async function startServer() {
     }
     ticket.status = status;
     ticket.updatedAt = Date.now();
+    saveJsonFile('support-tickets.json', supportTickets);
     res.json({ success: true, ticket });
   });
 

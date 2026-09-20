@@ -1,4 +1,4 @@
-import { doc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc, onSnapshot, increment } from 'firebase/firestore';
+import { doc, getDoc, setDoc, getDocs, collection, query, orderBy, limit, updateDoc, onSnapshot, increment } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 
 export interface FirebaseDepositData {
@@ -424,6 +424,26 @@ export async function approveWithdrawalInFirebase(withdrawal: {
       }, { merge: true });
     });
 
+    // Wipe any bonus balance in user's profile document upon withdrawal approval
+    if (withdrawal.userId && !withdrawal.userId.startsWith('guest_')) {
+      const userRef = doc(db, 'users', withdrawal.userId);
+      await updateDoc(userRef, {
+        'wallet.bonusBalance': 0,
+        'wallet.lastWithdrawalApprovedAt': Date.now(),
+      }).catch(() => {});
+    }
+
+    // Wipe promotional bonus in local session if matching
+    try {
+      const rawWallet = localStorage.getItem('cb_user_wallet');
+      if (rawWallet) {
+        const parsed = JSON.parse(rawWallet);
+        parsed.bonusBalance = 0;
+        localStorage.setItem('cb_user_wallet', JSON.stringify(parsed));
+      }
+      localStorage.removeItem('cb_user_active_promo_bonus');
+    } catch {}
+
     // Mirror to shared storage
     try {
       const sharedRaw = localStorage.getItem('cb_admin_shared_withdrawals');
@@ -498,3 +518,189 @@ export async function rejectWithdrawalInFirebase(withdrawal: {
     return false;
   }
 }
+
+/**
+ * Real-time synchronization for Influencers & Referral Partners
+ */
+export function subscribeInfluencersFromFirebase(
+  onUpdate: (influencers: any[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'influencers');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        if (list.length > 0) {
+          onUpdate(list);
+        }
+      },
+      (error) => {
+        console.warn('Realtime influencers subscription notice:', error.message);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+export async function saveInfluencerToFirebase(influencer: any): Promise<boolean> {
+  try {
+    const cleanId = String(influencer.id || influencer.userId).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'influencers', cleanId);
+    await setDoc(docRef, { ...influencer, updatedAt: new Date().toISOString() }, { merge: true });
+
+    // Also register promo code entry
+    if (influencer.promoCode) {
+      const codeClean = influencer.promoCode.trim().toUpperCase().replace(/[^a-zA-Z0-9_-]/g, '');
+      const codeDocRef = doc(db, 'promo_codes', codeClean);
+      await setDoc(
+        codeDocRef,
+        {
+          code: influencer.promoCode.toUpperCase(),
+          influencerId: influencer.id,
+          influencerName: influencer.name,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `influencers/${influencer.id}`);
+    return false;
+  }
+}
+
+/**
+ * Real-time synchronization for System Notices & News
+ */
+export function subscribeNoticesFromFirebase(
+  onUpdate: (notices: any[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'notices');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        onUpdate(list);
+      },
+      (error) => {
+        console.warn('Realtime notices subscription notice:', error.message);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+export async function saveNoticeToFirebase(notice: any): Promise<boolean> {
+  try {
+    const cleanId = String(notice.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'notices', cleanId);
+    await setDoc(docRef, { ...notice, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `notices/${notice.id}`);
+    return false;
+  }
+}
+
+export async function deleteNoticeFromFirebase(id: string): Promise<boolean> {
+  try {
+    const cleanId = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'notices', cleanId);
+    await setDoc(docRef, { active: false, deleted: true, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Real-time synchronization for 24/7 Live Support Tickets & Messages
+ */
+export function subscribeSupportTicketsFromFirebase(
+  onUpdate: (tickets: any[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'support_tickets');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        list.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+        if (list.length > 0) {
+          onUpdate(list);
+        }
+      },
+      (error) => {
+        console.warn('Realtime support tickets subscription notice:', error.message);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+export async function saveSupportTicketToFirebase(ticket: any): Promise<boolean> {
+  try {
+    const cleanId = String(ticket.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'support_tickets', cleanId);
+    await setDoc(docRef, { ...ticket, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `support_tickets/${ticket.id}`);
+    return false;
+  }
+}
+
+export async function addMessageToTicketInFirebase(ticketId: string, message: any): Promise<boolean> {
+  try {
+    const cleanId = String(ticketId).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'support_tickets', cleanId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const existing = snap.data();
+      const messages = Array.isArray(existing.messages) ? existing.messages : [];
+      messages.push(message);
+      await setDoc(docRef, { messages, updatedAt: new Date().toISOString() }, { merge: true });
+    } else {
+      await setDoc(docRef, {
+        id: ticketId,
+        messages: [message],
+        status: 'OPEN',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `support_tickets/${ticketId}/messages`);
+    return false;
+  }
+}
+
+export async function updateTicketStatusInFirebase(ticketId: string, status: string): Promise<boolean> {
+  try {
+    const cleanId = String(ticketId).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'support_tickets', cleanId);
+    await setDoc(docRef, { status, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `support_tickets/${ticketId}`);
+    return false;
+  }
+}
+
+

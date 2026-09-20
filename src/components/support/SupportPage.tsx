@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SupportTicket } from '../../types';
 import {
   LifeBuoy,
@@ -13,19 +13,40 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Paperclip,
+  Image as ImageIcon,
+  X,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import {
+  subscribeSupportTicketsFromFirebase,
+  saveSupportTicketToFirebase,
+  addMessageToTicketInFirebase,
+} from '../../services/firebaseRequests';
 
-export const SupportPage: React.FC = () => {
+interface SupportPageProps {
+  userName?: string;
+  userEmail?: string;
+}
+
+export const SupportPage: React.FC<SupportPageProps> = ({
+  userName = 'Trader',
+  userEmail = 'Johirul4848@gmail.com',
+}) => {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeTicketId, setActiveTicketId] = useState<string>('');
   const [newSubject, setNewSubject] = useState('');
-  const [newCategory, setNewCategory] = useState('Trading & Execution');
+  const [newCategory, setNewCategory] = useState('Binance Pay Deposit');
   const [newMsg, setNewMsg] = useState('');
   const [replyText, setReplyText] = useState('');
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [isCreatingTicket, setIsCreatingTicket] = useState(false);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const faqs = [
     {
@@ -50,6 +71,41 @@ export const SupportPage: React.FC = () => {
     },
   ];
 
+  const quickTemplates = [
+    {
+      label: '⚡ Binance Deposit Pending',
+      category: 'Binance Pay Deposit',
+      subject: 'Binance Pay Deposit Under Review',
+      msg: 'Hello Support, I submitted a deposit via Binance Pay. My Binance ID is [enter ID] and amount is $[enter amount]. Please review and credit my account.',
+    },
+    {
+      label: '💸 Withdrawal Status Inquiry',
+      category: 'Withdrawal Inquiry',
+      subject: 'Withdrawal Request Processing Status',
+      msg: 'Hello Treasury, I requested a withdrawal to my Binance Pay ID. Kindly confirm when the transfer will be sent to my Binance account.',
+    },
+    {
+      label: '🎁 Influencer Promo Bonus',
+      category: 'General Support',
+      subject: 'Influencer Promo Code Activation Query',
+      msg: 'Hello, I have an influencer promotion code. I would like to confirm my bonus percentage and eligibility.',
+    },
+    {
+      label: '📊 Binary Trade Execution',
+      category: 'Trading & Execution',
+      subject: 'Trade Settlement Verification Inquiry',
+      msg: 'Hello, I would like to verify the Binance reference exit price for my recent trade on the platform.',
+    },
+  ];
+
+  const applyTemplate = (tmpl: typeof quickTemplates[0]) => {
+    sound.playClick();
+    setNewCategory(tmpl.category);
+    setNewSubject(tmpl.subject);
+    setNewMsg(tmpl.msg);
+    setIsCreatingTicket(true);
+  };
+
   const fetchTickets = async () => {
     try {
       setIsLoading(true);
@@ -72,65 +128,156 @@ export const SupportPage: React.FC = () => {
 
   useEffect(() => {
     fetchTickets();
-    const interval = setInterval(fetchTickets, 8000);
-    return () => clearInterval(interval);
+
+    // Subscribe to Firestore for real-time ticket streaming
+    const unsubscribe = subscribeSupportTicketsFromFirebase((fireTickets) => {
+      if (Array.isArray(fireTickets) && fireTickets.length > 0) {
+        setTickets(fireTickets);
+        if (!activeTicketId && fireTickets.length > 0) {
+          setActiveTicketId(fireTickets[0].id);
+        }
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) {
+      alert('Attachment image size must be under 3MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachedImage(reader.result as string);
+      sound.playClick();
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.trim() || !newMsg.trim()) return;
     sound.playClick();
 
+    const ticketId = 'TKT-' + Math.floor(100000 + Math.random() * 900000);
+    const newTicket: SupportTicket = {
+      id: ticketId,
+      userId: userEmail,
+      subject: newSubject.trim(),
+      category: newCategory,
+      status: 'OPEN',
+      createdAt: Date.now(),
+      messages: [
+        {
+          id: 'MSG-' + Math.floor(100000 + Math.random() * 900000),
+          sender: 'user',
+          text: newMsg.trim() + (attachedImage ? `\n[Image Attachment Included]` : ''),
+          imageUrl: attachedImage || undefined,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
     try {
+      // Save to Firebase Firestore
+      await saveSupportTicketToFirebase(newTicket);
+
+      // Save to backend API
       const res = await fetch('/api/support/tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: 'user_default',
+          id: ticketId,
+          userId: userEmail,
+          userName,
+          userEmail,
           subject: newSubject.trim(),
           category: newCategory,
           message: newMsg.trim(),
+          imageUrl: attachedImage || undefined,
         }),
       });
 
       if (res.ok) {
         const created = await res.json();
-        setTickets((prev) => [created, ...prev]);
+        setTickets((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
         setActiveTicketId(created.id);
-        setIsCreatingTicket(false);
-        setNewSubject('');
-        setNewMsg('');
-        sound.playWin();
+      } else {
+        setTickets((prev) => [newTicket, ...prev.filter((t) => t.id !== newTicket.id)]);
+        setActiveTicketId(ticketId);
       }
+
+      setIsCreatingTicket(false);
+      setNewSubject('');
+      setNewMsg('');
+      setAttachedImage(null);
+      sound.playWin();
     } catch {
-      // ignore
+      setTickets((prev) => [newTicket, ...prev.filter((t) => t.id !== newTicket.id)]);
+      setActiveTicketId(ticketId);
+      setIsCreatingTicket(false);
+      setNewSubject('');
+      setNewMsg('');
+      setAttachedImage(null);
     }
   };
 
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!replyText.trim() || !activeTicketId) return;
+    if ((!replyText.trim() && !attachedImage) || !activeTicketId) return;
     sound.playClick();
 
     const currentText = replyText.trim();
+    const currentImg = attachedImage;
     setReplyText('');
+    setAttachedImage(null);
 
+    const messageObj = {
+      id: 'MSG-' + Math.floor(100000 + Math.random() * 900000),
+      sender: 'user' as const,
+      text: currentText || (currentImg ? 'Sent an image attachment' : ''),
+      imageUrl: currentImg || undefined,
+      timestamp: Date.now(),
+    };
+
+    // Update Firestore
+    addMessageToTicketInFirebase(activeTicketId, messageObj).catch(() => {});
+
+    // Update API
     try {
       const res = await fetch(`/api/support/tickets/${activeTicketId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sender: 'user',
-          text: currentText,
+          text: messageObj.text,
+          imageUrl: messageObj.imageUrl,
         }),
       });
 
       if (res.ok) {
         const updated = await res.json();
         setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      } else {
+        setTickets((prev) =>
+          prev.map((t) =>
+            t.id === activeTicketId
+              ? { ...t, messages: [...t.messages, messageObj] }
+              : t
+          )
+        );
       }
     } catch {
-      // ignore
+      setTickets((prev) =>
+        prev.map((t) =>
+          t.id === activeTicketId
+            ? { ...t, messages: [...t.messages, messageObj] }
+            : t
+        )
+      );
     }
   };
 
@@ -150,11 +297,11 @@ export const SupportPage: React.FC = () => {
                 <h1 className="text-xl sm:text-2xl font-black text-white">24/7 Global Support Desk</h1>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Agents Online
+                  Treasury Active (<span className="font-mono">&lt; 2m response</span>)
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Fast resolution for deposits, Binance Pay inquiries, account verifications, and trade execution.
+                Direct inquiry channel for <strong className="text-white">{userName}</strong> ({userEmail}). Live verification & prompt assistance.
               </p>
             </div>
           </div>
@@ -180,8 +327,27 @@ export const SupportPage: React.FC = () => {
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition cursor-pointer active:scale-95"
             >
               <Plus className="w-4 h-4 stroke-[3]" />
-              <span>{isCreatingTicket ? 'View My Tickets' : 'New Ticket Inquiry'}</span>
+              <span>{isCreatingTicket ? 'View My Inquiries' : 'New Ticket Inquiry'}</span>
             </button>
+          </div>
+        </div>
+
+        {/* Quick Help Template Pills */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Fast-Track Inquiries (Click to auto-compose ticket)</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {quickTemplates.map((t, idx) => (
+              <button
+                key={idx}
+                onClick={() => applyTemplate(t)}
+                className="px-3 py-1.5 rounded-xl bg-[#0e1424] hover:bg-[#16213a] border border-slate-800 hover:border-cyan-500/50 text-xs text-slate-300 hover:text-cyan-300 transition-colors cursor-pointer active:scale-95"
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -195,13 +361,13 @@ export const SupportPage: React.FC = () => {
                   <span>Create Direct Support Inquiry</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Our treasury & technical agents usually reply in under 5 minutes.
+                  Our treasury & technical agents usually reply in under 3 minutes.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsCreatingTicket(false)}
-                className="text-xs text-slate-400 hover:text-white"
+                className="text-xs text-slate-400 hover:text-white cursor-pointer px-3 py-1 rounded-lg bg-slate-800"
               >
                 Cancel
               </button>
@@ -212,7 +378,7 @@ export const SupportPage: React.FC = () => {
                 <label className="text-xs font-bold text-slate-300">Subject</label>
                 <input
                   type="text"
-                  placeholder="e.g. Deposit confirmation or trade clarification"
+                  placeholder="e.g. Binance Pay deposit inquiry"
                   value={newSubject}
                   onChange={(e) => setNewSubject(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 focus:outline-none focus:border-cyan-400"
@@ -248,12 +414,47 @@ export const SupportPage: React.FC = () => {
               />
             </div>
 
-            <button
-              type="submit"
-              className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-xs rounded-xl transition cursor-pointer shadow-lg active:scale-95"
-            >
-              Submit Ticket to Admin
-            </button>
+            {/* Image attachment preview in creation */}
+            {attachedImage && (
+              <div className="relative inline-block border border-slate-700 rounded-xl p-1 bg-slate-900">
+                <img src={attachedImage} alt="Attachment" className="max-h-32 rounded-lg object-contain" />
+                <button
+                  type="button"
+                  onClick={() => setAttachedImage(null)}
+                  className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Attach Screenshot (Binance slip)</span>
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-xs rounded-xl transition cursor-pointer shadow-lg active:scale-95 flex items-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                <span>Submit Ticket to Treasury</span>
+              </button>
+            </div>
           </form>
         ) : (
           /* Live Ticket Chat & History */
@@ -261,14 +462,14 @@ export const SupportPage: React.FC = () => {
             {/* Tickets list (4 Cols) */}
             <div className="lg:col-span-4 bg-[#0f1422] border border-slate-800 rounded-3xl p-4 space-y-2.5 shadow-xl">
               <div className="text-xs font-black text-slate-400 px-2 py-1 uppercase tracking-wider flex items-center justify-between">
-                <span>My Open Inquiries</span>
+                <span>My Inquiries</span>
                 <span className="font-mono text-cyan-400">({tickets.length})</span>
               </div>
 
-              <div className="space-y-2 max-h-[480px] overflow-y-auto custom-scrollbar pr-1">
+              <div className="space-y-2 max-h-[500px] overflow-y-auto custom-scrollbar pr-1">
                 {tickets.length === 0 ? (
                   <div className="p-8 text-center text-slate-500 text-xs">
-                    No tickets yet. Click "New Ticket Inquiry" to get instant help.
+                    No tickets yet. Click "New Ticket Inquiry" or select a fast-track pill above.
                   </div>
                 ) : (
                   tickets.map((t) => (
@@ -307,7 +508,7 @@ export const SupportPage: React.FC = () => {
             </div>
 
             {/* Chat conversation box (8 Cols) */}
-            <div className="lg:col-span-8 bg-[#0f1422] border border-slate-800 rounded-3xl flex flex-col h-[520px] shadow-xl overflow-hidden">
+            <div className="lg:col-span-8 bg-[#0f1422] border border-slate-800 rounded-3xl flex flex-col h-[540px] shadow-xl overflow-hidden">
               {activeTicket ? (
                 <>
                   <div className="p-4 border-b border-slate-800 bg-[#141b2c] flex items-center justify-between">
@@ -342,20 +543,65 @@ export const SupportPage: React.FC = () => {
                               : 'bg-[#151d2e] text-slate-200 border border-slate-700/80 rounded-tl-none'
                           }`}
                         >
-                          <div className="text-[10px] font-bold text-slate-300 mb-1">
-                            {m.sender === 'user' ? 'You' : 'CryptoBari Support Agent'}
+                          <div className="text-[10px] font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+                            {m.sender === 'user' ? (
+                              <span>You</span>
+                            ) : (
+                              <>
+                                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                <span className="text-emerald-300 font-bold">CryptoBari Support Specialist</span>
+                              </>
+                            )}
                           </div>
-                          <div>{m.text}</div>
+                          <div className="whitespace-pre-line">{m.text}</div>
+                          {m.imageUrl && (
+                            <div className="mt-2 rounded-xl overflow-hidden border border-white/20">
+                              <img src={m.imageUrl} alt="Attached Proof" className="max-h-48 object-contain w-full bg-black/40" />
+                            </div>
+                          )}
                           <div className={`text-[9px] mt-1.5 ${m.sender === 'user' ? 'text-cyan-100' : 'text-slate-500'}`}>
                             {new Date(m.timestamp).toLocaleTimeString()}
                           </div>
                         </div>
                       </div>
                     ))}
+                    <div ref={messagesEndRef} />
                   </div>
+
+                  {/* Attachment preview in reply */}
+                  {attachedImage && (
+                    <div className="p-2 bg-[#121828] border-t border-slate-800 flex items-center gap-2">
+                      <div className="relative inline-block border border-slate-700 rounded-lg p-1 bg-black/40">
+                        <img src={attachedImage} alt="Attachment" className="h-16 rounded object-contain" />
+                        <button
+                          type="button"
+                          onClick={() => setAttachedImage(null)}
+                          className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5 shadow cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <span className="text-xs text-slate-400">Screenshot attached to reply</span>
+                    </div>
+                  )}
 
                   {/* Reply Input */}
                   <form onSubmit={handleSendReply} className="p-3.5 border-t border-slate-800 bg-[#121828] flex items-center gap-2">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleImageUpload}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer transition"
+                      title="Attach screenshot or payment proof"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
                     <input
                       type="text"
                       placeholder="Type your message to support..."
@@ -416,3 +662,4 @@ export const SupportPage: React.FC = () => {
     </div>
   );
 };
+

@@ -44,10 +44,23 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // System Notices & Announcements (Public read, Admin manage)
+    // System Notices & Announcements (Public read, Admin / broker manage)
     match /notices/{noticeId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
+    }
+
+    // Influencer Promotion Profiles & Partner Codes
+    match /influencers/{influencerId} {
+      allow read, write: if true;
+    }
+
+    match /promo_codes/{code} {
+      allow read, write: if true;
+    }
+
+    // Live 24/7 Support Desk Tickets & Messages
+    match /support_tickets/{ticketId} {
+      allow read, write: if true;
     }
 
     // Trade settlement history

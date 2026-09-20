@@ -71,6 +71,7 @@ export const App: React.FC = () => {
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isNoticesModalOpen, setIsNoticesModalOpen] = useState(false);
+  const [initialPromoCodeForDeposit, setInitialPromoCodeForDeposit] = useState<string | undefined>(undefined);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'area'>('candles');
 
@@ -328,13 +329,16 @@ export const App: React.FC = () => {
 
       if (isInitialDepositSyncRef.current) {
         isInitialDepositSyncRef.current = false;
-        const oneMinuteAgo = Date.now() - 60000;
+        // On initial sync / page refresh: Mark ALL currently existing approved deposits as already processed
+        // CRITICAL: Return immediately so that past approved deposits are never re-credited on refresh!
         approvedDeposits.forEach(d => {
-          const approvedTime = d.approvedAt || (d.reviewedAt ? new Date(d.reviewedAt).getTime() : 0);
-          if (approvedTime < oneMinuteAgo) {
-            processedDepositsRef.current.add(d.id);
-          }
+          processedDepositsRef.current.add(d.id);
         });
+        try {
+          const arr = Array.from(processedDepositsRef.current);
+          localStorage.setItem('cb_credited_deposit_ids', JSON.stringify(arr.slice(-300)));
+        } catch {}
+        return;
       }
 
       for (const d of approvedDeposits) {
@@ -506,6 +510,11 @@ export const App: React.FC = () => {
           liveBalance: newLive,
           lockedBalance: newLocked,
         };
+
+        // Persist to localStorage immediately
+        try {
+          localStorage.setItem('cb_user_wallet', JSON.stringify(updatedWallet));
+        } catch {}
 
         // Sync with Firestore if authenticated
         if (auth.currentUser) {
@@ -1041,6 +1050,7 @@ export const App: React.FC = () => {
                 liveBalance={wallet.liveBalance}
                 userEmail={profile.email}
                 userName={profile.name}
+                initialPromoCode={initialPromoCodeForDeposit}
                 onBack={() => {
                   sound.playClick();
                   setCurrentTab('trade');
@@ -1074,24 +1084,7 @@ export const App: React.FC = () => {
                   sound.playClick();
                   setCurrentTab('trade');
                 }}
-                onWithdrawSuccess={(amount, method, address) => {
-                  setWallet((prev) => ({
-                    ...prev,
-                    liveBalance: Math.max(0, prev.liveBalance - amount),
-                  }));
-                  setTransactions((prev) => [
-                    {
-                      id: `TX-WTH-${Date.now().toString().slice(-6)}`,
-                      type: 'WITHDRAWAL',
-                      amount,
-                      currency: 'USD',
-                      status: 'PENDING',
-                      timestamp: Date.now(),
-                      description: `Withdrawal request to Binance ID ${address} (${method})`,
-                    },
-                    ...prev,
-                  ]);
-                }}
+                onWithdrawSuccess={handleWithdrawSuccess}
               />
             </div>
           )}
@@ -1164,7 +1157,12 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {currentTab === 'support' && <SupportPage />}
+          {currentTab === 'support' && (
+            <SupportPage
+              userName={profile.name}
+              userEmail={profile.email}
+            />
+          )}
 
           {currentTab === 'admin' && (
             <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -1238,10 +1236,14 @@ export const App: React.FC = () => {
       {/* Dedicated Binance Pay Deposit Modal */}
       <DepositModal
         isOpen={isDepositModalOpen}
-        onClose={() => setIsDepositModalOpen(false)}
+        onClose={() => {
+          setIsDepositModalOpen(false);
+          setInitialPromoCodeForDeposit(undefined);
+        }}
         onDepositSuccess={handleDepositSuccess}
         userName={profile.name}
         userEmail={profile.email}
+        initialPromoCode={initialPromoCodeForDeposit}
       />
 
       {/* Dedicated Binance Pay Withdrawal Modal */}
@@ -1259,6 +1261,13 @@ export const App: React.FC = () => {
       <NoticesModal
         isOpen={isNoticesModalOpen}
         onClose={() => setIsNoticesModalOpen(false)}
+        onOpenDeposit={(promoCode) => {
+          setInitialPromoCodeForDeposit(promoCode);
+          setIsDepositModalOpen(true);
+        }}
+        onOpenSupport={() => {
+          setCurrentTab('support');
+        }}
       />
 
       {/* User Profile Modal */}

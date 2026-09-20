@@ -79,8 +79,8 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
 
   const handleSetPercent = (pct: number) => {
     sound.playClick();
-    if (liveBalance <= 0) return;
-    const calculated = parseFloat((liveBalance * pct).toFixed(2));
+    if (withdrawableBalance <= 0) return;
+    const calculated = parseFloat((withdrawableBalance * pct).toFixed(2));
     setWithdrawAmount(Math.max(0, calculated));
   };
 

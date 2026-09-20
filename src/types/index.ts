@@ -138,13 +138,21 @@ export interface NotificationItem {
 export interface SupportTicket {
   id: string;
   userId: string;
+  userName?: string;
+  userEmail?: string;
   subject: string;
   category: string;
   status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
+  priority?: 'NORMAL' | 'HIGH' | 'URGENT';
   createdAt: number;
+  updatedAt?: number;
   messages: {
-    sender: 'user' | 'support';
+    id?: string;
+    sender: 'user' | 'support' | 'admin';
+    senderName?: string;
     text: string;
+    attachment?: string;
+    imageUrl?: string;
     timestamp: number;
   }[];
 }

@@ -355,6 +355,26 @@ class ReferralService {
     this.data.referredUsers = [];
     this.notify();
   }
+
+  // Admin: Get complete network overview
+  public adminGetNetworkOverview() {
+    const totalVolume = this.data.referredUsers.reduce((sum, u) => sum + (u.totalVolume || 0), 0);
+    const totalCommission = this.data.referredUsers.reduce((sum, u) => sum + (u.commissionGenerated || 0), 0);
+    const activeCount = this.data.referredUsers.filter(u => u.status === 'Active').length;
+
+    return {
+      totalPartners: Math.max(1, this.data.referredUsers.length),
+      activePartners: activeCount,
+      totalVolume,
+      totalCommission,
+      myReferralCode: this.data.myReferralCode,
+      currentBalance: this.data.commissionBalance,
+      totalEarned: this.data.totalEarned,
+      convertedTotal: this.data.convertedTotal,
+      recentLogs: this.data.commissionLogs.slice(0, 15),
+      referredTraders: this.data.referredUsers,
+    };
+  }
 }
 
 export const referralService = new ReferralService();
