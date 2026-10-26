@@ -38,6 +38,11 @@ import {
   ChevronDown,
   Grid,
   Check,
+  X,
+  ArrowUp,
+  ArrowDown,
+  DollarSign,
+  Wallet,
 } from 'lucide-react';
 import { TradeMarkersOverlay } from './TradeMarkersOverlay';
 import { IndicatorsAndToolsMenu } from './IndicatorsAndToolsMenu';
@@ -63,6 +68,13 @@ interface ChartContainerProps {
   chartType: 'candles' | 'area';
   onChartTypeChange: (type: 'candles' | 'area') => void;
   accountMode: 'DEMO' | 'LIVE';
+  availableBalance?: number;
+  onPlaceTrade?: (params: {
+    direction: 'UP' | 'DOWN';
+    investment: number;
+    durationSeconds: number;
+  }) => Promise<void> | void;
+  isPlacingTrade?: boolean;
   onPriceUpdate?: (price: number) => void;
   connectionStatus?: ConnectionStatus;
   onOpenSelector?: () => void;
@@ -87,10 +99,14 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   chartType,
   onChartTypeChange,
   accountMode,
+  availableBalance = 1000,
+  onPlaceTrade,
+  isPlacingTrade = false,
   onPriceUpdate,
   connectionStatus = 'LIVE',
   onOpenSelector,
 }) => {
+  const outerWrapperRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +132,9 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   const candlesHistoryRef = useRef<CandleData[]>([]);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenInvestment, setFullscreenInvestment] = useState<number>(10);
+  const [fullscreenDuration, setFullscreenDuration] = useState<number>(60);
+  const [isViewingHistory, setIsViewingHistory] = useState(false);
   const [isLoadingCandles, setIsLoadingCandles] = useState(true);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showTradesFeed, setShowTradesFeed] = useState(false);
@@ -650,7 +669,8 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
         secondsVisible: isSecondsVisible,
         barSpacing: 10,
         minBarSpacing: 3,
-        rightOffset: 6,
+        rightOffset: 12,
+        shiftVisibleRangeOnNewBar: false,
       },
       rightPriceScale: {
         borderColor: '#1e293b',
@@ -663,6 +683,19 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     });
 
     chartRef.current = chart;
+
+    // Track if user has scrolled back to inspect historical candles
+    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
+      if (!logicalRange || !seriesRef.current) return;
+      try {
+        const barsInfo = seriesRef.current.barsInLogicalRange(logicalRange);
+        if (barsInfo && barsInfo.barsAfter > 4) {
+          setIsViewingHistory(true);
+        } else {
+          setIsViewingHistory(false);
+        }
+      } catch {}
+    });
 
     // Series precision
     const precision = symbol.pricePrecision || 2;
@@ -702,7 +735,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
     let isCancelled = false;
 
     const activeService = binanceMarketData;
-    const candlePromise = binanceMarketData.fetchHistoricalCandles(symbol.symbol, timeframe, 150);
+    const candlePromise = binanceMarketData.fetchHistoricalCandles(symbol.symbol, timeframe, 800);
 
     candlePromise
       .then((candles) => {
@@ -800,7 +833,7 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
             candlesHistoryRef.current[lastIdx] = candle;
           } else if (Number(candle.time) > Number(lastCandle.time)) {
             candlesHistoryRef.current.push(candle);
-            if (candlesHistoryRef.current.length > 200) {
+            if (candlesHistoryRef.current.length > 1200) {
               candlesHistoryRef.current.shift();
             }
           }
@@ -925,25 +958,61 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
   };
 
   const toggleFullscreen = () => {
-    if (!chartContainerRef.current) return;
     sound.playClick();
     if (!isFullscreen) {
-      if (chartContainerRef.current.requestFullscreen) {
-        chartContainerRef.current.requestFullscreen();
+      if (outerWrapperRef.current?.requestFullscreen) {
+        outerWrapperRef.current.requestFullscreen().catch(() => {});
       }
       setIsFullscreen(true);
     } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
       }
       setIsFullscreen(false);
     }
   };
 
+  const handleExitFullscreen = () => {
+    sound.playClick();
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    setIsFullscreen(false);
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
+  const handleFullscreenTrade = (direction: 'UP' | 'DOWN') => {
+    if (!onPlaceTrade) return;
+    if (fullscreenInvestment > availableBalance) {
+      sound.playLoss();
+      return;
+    }
+    sound.playClick();
+    onPlaceTrade({
+      direction,
+      investment: fullscreenInvestment,
+      durationSeconds: fullscreenDuration,
+    });
+  };
+
   const effectiveStatus = metrics?.wsStatus || connectionStatus;
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-[#0b0f17] overflow-hidden select-none border border-slate-800/60 rounded-lg shadow-2xl">
+    <div
+      ref={outerWrapperRef}
+      className={`relative w-full h-full flex flex-col bg-[#0b0f17] overflow-hidden select-none border border-slate-800/60 rounded-lg shadow-2xl ${
+        isFullscreen ? '!fixed !inset-0 !z-[9999] !w-screen !h-screen !rounded-none !border-none' : ''
+      }`}
+    >
       {/* 1. TIMEFRAMES & CHART TOOLS BAR */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 bg-[#0d121c]/90 z-40 flex-wrap gap-2">
         <div className="flex items-center gap-2">
@@ -1268,6 +1337,15 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
+          {isFullscreen && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#131b2e] border border-cyan-500/40 rounded-lg text-xs font-mono shadow-md">
+              <Wallet className="w-3 h-3 text-cyan-400" />
+              <span className="text-slate-400 font-bold">{accountMode}:</span>
+              <span className={`font-black ${accountMode === 'DEMO' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                ${availableBalance.toFixed(2)}
+              </span>
+            </div>
+          )}
           <button
             id="chart-fullscreen"
             onClick={toggleFullscreen}
@@ -1276,6 +1354,17 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
+          {isFullscreen && (
+            <button
+              id="chart-fullscreen-exit-btn"
+              onClick={handleExitFullscreen}
+              title="Close Fullscreen (Back to standard view)"
+              className="flex items-center gap-1 px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-white font-bold text-xs border border-rose-500/40 transition cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Back</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1494,9 +1583,165 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
           </div>
         )}
 
+        {/* Jump to Live Candle floating pill button (only appears if user panned back to history) */}
+        {isViewingHistory && (
+          <button
+            id="btn-jump-live-candle"
+            onClick={() => {
+              sound.playClick();
+              chartRef.current?.timeScale().scrollToRealTime();
+              setIsViewingHistory(false);
+            }}
+            className="absolute bottom-6 right-16 z-30 px-3.5 py-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-2xl flex items-center gap-2 border border-emerald-300 animate-bounce cursor-pointer transition active:scale-95"
+            title="Jump to the latest live candle"
+          >
+            <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping" />
+            <span>Jump to Live Candle ➔</span>
+          </button>
+        )}
+
         {/* Lightweight Charts Mount Element */}
         <div ref={chartContainerRef} className="w-full h-full" />
       </div>
+
+      {/* FULLSCREEN TRADING DOCK (Active only in Fullscreen Mode) */}
+      {isFullscreen && (
+        <div className="p-3 bg-[#0d1322]/95 border-t border-slate-800 backdrop-blur-md z-40 flex flex-wrap items-center justify-between gap-3 shadow-[0_-10px_30px_rgba(0,0,0,0.8)]">
+          {/* Left: Account & Asset Info */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#151c2e] border border-slate-700/80 rounded-xl">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">{accountMode}</span>
+              <span className={`font-mono font-black text-sm ${accountMode === 'DEMO' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                ${availableBalance.toFixed(2)}
+              </span>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-[#151c2e] border border-slate-700/80 rounded-xl text-xs font-bold text-white">
+              <span>{symbol.displayPair || symbol.symbol}</span>
+              <span className="text-emerald-400 font-mono font-black">+{symbol.payoutRate}%</span>
+            </div>
+          </div>
+
+          {/* Center: Expiration & Investment Amount */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Expiration Selector */}
+            <div className="flex items-center gap-1 bg-[#101726] p-1 rounded-xl border border-slate-800">
+              <span className="text-[10px] text-slate-400 font-bold px-1.5">EXPIRY:</span>
+              {[
+                { label: '15s', sec: 15 },
+                { label: '30s', sec: 30 },
+                { label: '1m', sec: 60 },
+                { label: '2m', sec: 120 },
+                { label: '5m', sec: 300 },
+              ].map((d) => (
+                <button
+                  key={d.sec}
+                  onClick={() => {
+                    sound.playClick();
+                    setFullscreenDuration(d.sec);
+                  }}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    fullscreenDuration === d.sec
+                      ? 'bg-amber-500 text-slate-950 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Investment Input with Quick Buttons */}
+            <div className="flex items-center gap-1.5 bg-[#101726] px-2 py-1 rounded-xl border border-slate-800">
+              <span className="text-[10px] text-slate-400 font-bold">INVEST:</span>
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  setFullscreenInvestment((p) => Math.max(1, p - 5));
+                }}
+                className="w-6 h-6 rounded bg-slate-800 text-slate-300 font-black text-xs hover:bg-slate-700 cursor-pointer"
+              >
+                -
+              </button>
+              <div className="flex items-center text-xs font-mono font-black text-white px-1">
+                <span>$</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="10000"
+                  value={fullscreenInvestment}
+                  onChange={(e) => setFullscreenInvestment(Math.max(1, parseFloat(e.target.value) || 1))}
+                  className="w-14 bg-transparent text-center font-bold text-white focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  setFullscreenInvestment((p) => p + 5);
+                }}
+                className="w-6 h-6 rounded bg-slate-800 text-slate-300 font-black text-xs hover:bg-slate-700 cursor-pointer"
+              >
+                +
+              </button>
+              {[10, 25, 50, 100].map((amt) => (
+                <button
+                  key={amt}
+                  onClick={() => {
+                    sound.playClick();
+                    setFullscreenInvestment(amt);
+                  }}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
+                    fullscreenInvestment === amt
+                      ? 'bg-blue-500 text-white'
+                      : 'text-slate-400 hover:text-slate-200 bg-slate-800/80'
+                  }`}
+                >
+                  ${amt}
+                </button>
+              ))}
+            </div>
+
+            {/* Profit & Total Return Preview */}
+            <div className="hidden md:flex flex-col text-[11px] font-mono leading-tight">
+              <span className="text-slate-400">Profit: +${((fullscreenInvestment * (symbol.payoutRate || 85)) / 100).toFixed(2)}</span>
+              <span className="text-emerald-400 font-bold">Return: +${(fullscreenInvestment + (fullscreenInvestment * (symbol.payoutRate || 85)) / 100).toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Right: Fullscreen Trading UP / DOWN Buttons & Exit */}
+          <div className="flex items-center gap-2">
+            <button
+              id="btn-fullscreen-call-up"
+              disabled={isPlacingTrade}
+              onClick={() => handleFullscreenTrade('UP')}
+              className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+            >
+              <ArrowUp className="w-4 h-4 stroke-[3]" />
+              <span>UP CALL</span>
+              <span className="text-[10px] opacity-90 font-mono">+{symbol.payoutRate}%</span>
+            </button>
+
+            <button
+              id="btn-fullscreen-put-down"
+              disabled={isPlacingTrade}
+              onClick={() => handleFullscreenTrade('DOWN')}
+              className="px-5 py-2.5 bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-400 hover:to-red-500 text-white font-black text-xs rounded-xl shadow-lg shadow-rose-500/20 active:scale-95 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+            >
+              <ArrowDown className="w-4 h-4 stroke-[3]" />
+              <span>DOWN PUT</span>
+              <span className="text-[10px] opacity-90 font-mono">+{symbol.payoutRate}%</span>
+            </button>
+
+            <button
+              id="btn-fullscreen-exit-dock"
+              onClick={handleExitFullscreen}
+              title="Exit Fullscreen (✕)"
+              className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer border border-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

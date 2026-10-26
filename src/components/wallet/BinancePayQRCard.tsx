@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Copy, Check, QrCode, ExternalLink, ShieldCheck, Sparkles } from 'lucide-react';
 import { sound } from '../../utils/audio';
+import { fetchBinanceGatewaySettingsFromFirebase, subscribeBinanceGatewaySettingsFromFirebase } from '../../services/firebaseRequests';
 
 interface BinancePayQRCardProps {
   binanceId?: string;
@@ -10,14 +11,82 @@ interface BinancePayQRCardProps {
 }
 
 export const BinancePayQRCard: React.FC<BinancePayQRCardProps> = ({
-  binanceId = '794380283',
-  nickname = 'CryptoBari',
-  customQrImage,
+  binanceId: propBinanceId,
+  nickname: propNickname,
+  customQrImage: propCustomQrImage,
   onCopySuccess,
 }) => {
   const [copiedId, setCopiedId] = useState(false);
   const [copiedNick, setCopiedNick] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
+
+  // Persistent gateway settings state
+  const [persistedSettings, setPersistedSettings] = useState<{
+    binanceId: string;
+    merchantName: string;
+    qrImage: string;
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('cb_binance_gateway_settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          binanceId: parsed.binanceId || '794380283',
+          merchantName: parsed.merchantName || 'CryptoBari',
+          qrImage: parsed.qrImage || parsed.qrCodeUrl || '',
+        };
+      }
+    } catch {}
+    return {
+      binanceId: '794380283',
+      merchantName: 'CryptoBari',
+      qrImage: '',
+    };
+  });
+
+  useEffect(() => {
+    // 1. Fetch from Firestore
+    fetchBinanceGatewaySettingsFromFirebase().then((data) => {
+      if (data) {
+        setPersistedSettings({
+          binanceId: data.binanceId || '794380283',
+          merchantName: data.merchantName || 'CryptoBari',
+          qrImage: data.qrImage || data.qrCodeUrl || '',
+        });
+      }
+    });
+
+    // 2. Real-time subscription
+    const unsub = subscribeBinanceGatewaySettingsFromFirebase((data) => {
+      if (data) {
+        setPersistedSettings({
+          binanceId: data.binanceId || '794380283',
+          merchantName: data.merchantName || 'CryptoBari',
+          qrImage: data.qrImage || data.qrCodeUrl || '',
+        });
+      }
+    });
+
+    const handleCustomEvent = (e: any) => {
+      if (e.detail) {
+        setPersistedSettings({
+          binanceId: e.detail.binanceId || '794380283',
+          merchantName: e.detail.merchantName || 'CryptoBari',
+          qrImage: e.detail.qrImage || e.detail.qrCodeUrl || '',
+        });
+      }
+    };
+    window.addEventListener('cb_gateway_updated', handleCustomEvent);
+
+    return () => {
+      unsub();
+      window.removeEventListener('cb_gateway_updated', handleCustomEvent);
+    };
+  }, []);
+
+  const binanceId = propBinanceId || persistedSettings.binanceId || '794380283';
+  const nickname = propNickname || persistedSettings.merchantName || 'CryptoBari';
+  const customQrImage = propCustomQrImage || persistedSettings.qrImage || '';
 
   const handleCopyId = () => {
     navigator.clipboard.writeText(binanceId);
@@ -31,6 +100,7 @@ export const BinancePayQRCard: React.FC<BinancePayQRCardProps> = ({
     navigator.clipboard.writeText(nickname);
     sound.playClick();
     setCopiedNick(true);
+    if (onCopySuccess) onCopySuccess();
     setTimeout(() => setCopiedNick(false), 2500);
   };
 

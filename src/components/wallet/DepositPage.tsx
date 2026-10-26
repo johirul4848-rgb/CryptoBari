@@ -72,11 +72,20 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   }, [initialPromoCode]);
 
   // Dynamic Binance Gateway settings
-  const [gatewaySettings, setGatewaySettings] = useState<BinanceSettings>({
-    binanceId: '794380283',
-    merchantName: 'CryptoBari',
-    qrCodeUrl: '',
-    notes: 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
+  const [gatewaySettings, setGatewaySettings] = useState<BinanceSettings>(() => {
+    try {
+      const saved = localStorage.getItem('cb_binance_gateway_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.binanceId) return parsed;
+      }
+    } catch {}
+    return {
+      binanceId: '794380283',
+      merchantName: 'CryptoBari',
+      qrCodeUrl: '',
+      notes: 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
+    };
   });
 
   // Recent deposits
@@ -84,12 +93,28 @@ export const DepositPage: React.FC<DepositPageProps> = ({
   const [recentDeposits, setRecentDeposits] = useState<any[]>([]);
 
   useEffect(() => {
-    // Fetch latest gateway settings
+    // 1. Fetch latest gateway settings from Firestore & LocalStorage
+    import('../../services/firebaseRequests').then(({ fetchBinanceGatewaySettingsFromFirebase, subscribeBinanceGatewaySettingsFromFirebase }) => {
+      fetchBinanceGatewaySettingsFromFirebase().then((data) => {
+        if (data && data.binanceId) {
+          setGatewaySettings((prev) => ({ ...prev, ...data }));
+        }
+      });
+
+      const unsubSettings = subscribeBinanceGatewaySettingsFromFirebase((data) => {
+        if (data && data.binanceId) {
+          setGatewaySettings((prev) => ({ ...prev, ...data }));
+        }
+      });
+      return unsubSettings;
+    }).catch(() => {});
+
+    // 2. Fetch from backend API
     fetch('/api/payment/binance-settings')
       .then((res) => res.json())
       .then((data) => {
         if (data && data.binanceId) {
-          setGatewaySettings(data);
+          setGatewaySettings((prev) => ({ ...prev, ...data }));
         }
       })
       .catch(() => {});
@@ -288,17 +313,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           totalCredited: totalCredited,
           promoCode: cleanPromo || undefined,
         });
-        setIsConfirmationModalOpen(true);
-
-        if (cleanPromo) {
-          influencerService.processDepositWithPromo({
-            depositId: depId,
-            traderName: userName,
-            traderEmail: userEmail,
-            depositAmount,
-            promoCode: cleanPromo,
-          });
-        }
+        // Commission will strictly be added to influencer account when Admin approves the deposit request
         setRecentDeposits(prev => [
           {
             id: depId,
@@ -383,15 +398,7 @@ export const DepositPage: React.FC<DepositPageProps> = ({
         promoCode: cleanPromo || undefined,
       });
       setIsConfirmationModalOpen(true);
-      if (cleanPromo) {
-        influencerService.processDepositWithPromo({
-          depositId: mockId,
-          traderName: userName,
-          traderEmail: userEmail,
-          depositAmount,
-          promoCode: cleanPromo,
-        });
-      }
+      // Commission will strictly be added to influencer account when Admin approves the deposit request
       setRecentDeposits(prev => [
         {
           id: mockId,

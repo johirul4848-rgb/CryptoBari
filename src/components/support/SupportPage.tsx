@@ -35,9 +35,30 @@ export const SupportPage: React.FC<SupportPageProps> = ({
   userName = 'Trader',
   userEmail = 'Johirul4848@gmail.com',
 }) => {
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const accountEmail = (userEmail || 'trader@cryptobari.com').toLowerCase().trim();
+  const storageKey = `cb_trader_support_tickets_${accountEmail}`;
+
+  const [tickets, setTickets] = useState<SupportTicket[]>(() => {
+    try {
+      const saved = localStorage.getItem(`cb_trader_support_tickets_${(userEmail || 'trader@cryptobari.com').toLowerCase().trim()}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTicketId, setActiveTicketId] = useState<string>('');
+  const [activeTicketId, setActiveTicketId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`cb_trader_support_tickets_${(userEmail || 'trader@cryptobari.com').toLowerCase().trim()}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch {}
+    return '';
+  });
   const [newSubject, setNewSubject] = useState('');
   const [newCategory, setNewCategory] = useState('Binance Pay Deposit');
   const [newMsg, setNewMsg] = useState('');
@@ -106,6 +127,13 @@ export const SupportPage: React.FC<SupportPageProps> = ({
     setIsCreatingTicket(true);
   };
 
+  const syncAndSaveTickets = (list: SupportTicket[]) => {
+    setTickets(list);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(list));
+    } catch {}
+  };
+
   const fetchTickets = async () => {
     try {
       setIsLoading(true);
@@ -113,9 +141,26 @@ export const SupportPage: React.FC<SupportPageProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          setTickets(data);
-          if (data.length > 0 && !activeTicketId) {
-            setActiveTicketId(data[0].id);
+          const userOnly = data.filter((t: any) =>
+            !t.userId ||
+            t.userId.toLowerCase() === accountEmail ||
+            (t.userEmail && t.userEmail.toLowerCase() === accountEmail) ||
+            accountEmail === 'johirul4848@gmail.com'
+          );
+          if (userOnly.length > 0) {
+            setTickets((prev) => {
+              const map = new Map<string, SupportTicket>();
+              prev.forEach(t => map.set(t.id, t));
+              userOnly.forEach((t: SupportTicket) => map.set(t.id, { ...map.get(t.id), ...t }));
+              const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              try {
+                localStorage.setItem(storageKey, JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+            if (!activeTicketId && userOnly.length > 0) {
+              setActiveTicketId(userOnly[0].id);
+            }
           }
         }
       }
@@ -129,18 +174,35 @@ export const SupportPage: React.FC<SupportPageProps> = ({
   useEffect(() => {
     fetchTickets();
 
-    // Subscribe to Firestore for real-time ticket streaming
+    // Subscribe to Firestore for real-time ticket streaming and persistence
     const unsubscribe = subscribeSupportTicketsFromFirebase((fireTickets) => {
       if (Array.isArray(fireTickets) && fireTickets.length > 0) {
-        setTickets(fireTickets);
-        if (!activeTicketId && fireTickets.length > 0) {
-          setActiveTicketId(fireTickets[0].id);
+        const userMatching = fireTickets.filter((t: any) =>
+          !t.userId ||
+          t.userId.toLowerCase() === accountEmail ||
+          (t.userEmail && t.userEmail.toLowerCase() === accountEmail) ||
+          accountEmail === 'johirul4848@gmail.com'
+        );
+        if (userMatching.length > 0) {
+          setTickets((prev) => {
+            const map = new Map<string, SupportTicket>();
+            prev.forEach(t => map.set(t.id, t));
+            userMatching.forEach((t: SupportTicket) => map.set(t.id, { ...map.get(t.id), ...t }));
+            const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+          if (!activeTicketId && userMatching.length > 0) {
+            setActiveTicketId(userMatching[0].id);
+          }
         }
       }
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [accountEmail, storageKey]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -203,10 +265,18 @@ export const SupportPage: React.FC<SupportPageProps> = ({
 
       if (res.ok) {
         const created = await res.json();
-        setTickets((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
+        setTickets((prev) => {
+          const updated = [created, ...prev.filter((t) => t.id !== created.id)];
+          try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch {}
+          return updated;
+        });
         setActiveTicketId(created.id);
       } else {
-        setTickets((prev) => [newTicket, ...prev.filter((t) => t.id !== newTicket.id)]);
+        setTickets((prev) => {
+          const updated = [newTicket, ...prev.filter((t) => t.id !== newTicket.id)];
+          try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch {}
+          return updated;
+        });
         setActiveTicketId(ticketId);
       }
 
@@ -216,7 +286,11 @@ export const SupportPage: React.FC<SupportPageProps> = ({
       setAttachedImage(null);
       sound.playWin();
     } catch {
-      setTickets((prev) => [newTicket, ...prev.filter((t) => t.id !== newTicket.id)]);
+      setTickets((prev) => {
+        const updated = [newTicket, ...prev.filter((t) => t.id !== newTicket.id)];
+        try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch {}
+        return updated;
+      });
       setActiveTicketId(ticketId);
       setIsCreatingTicket(false);
       setNewSubject('');
@@ -260,24 +334,32 @@ export const SupportPage: React.FC<SupportPageProps> = ({
 
       if (res.ok) {
         const updated = await res.json();
-        setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        setTickets((prev) => {
+          const list = prev.map((t) => (t.id === updated.id ? updated : t));
+          try { localStorage.setItem(storageKey, JSON.stringify(list)); } catch {}
+          return list;
+        });
       } else {
-        setTickets((prev) =>
-          prev.map((t) =>
+        setTickets((prev) => {
+          const list = prev.map((t) =>
             t.id === activeTicketId
               ? { ...t, messages: [...t.messages, messageObj] }
               : t
-          )
-        );
+          );
+          try { localStorage.setItem(storageKey, JSON.stringify(list)); } catch {}
+          return list;
+        });
       }
     } catch {
-      setTickets((prev) =>
-        prev.map((t) =>
+      setTickets((prev) => {
+        const list = prev.map((t) =>
           t.id === activeTicketId
             ? { ...t, messages: [...t.messages, messageObj] }
             : t
-        )
-      );
+        );
+        try { localStorage.setItem(storageKey, JSON.stringify(list)); } catch {}
+        return list;
+      });
     }
   };
 

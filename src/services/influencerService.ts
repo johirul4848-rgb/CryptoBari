@@ -655,22 +655,46 @@ class InfluencerService {
     };
   }
 
-  // Record deposit made with promo code:
-  // Automatically adds 20% to the influencer's balance!
-  public processDepositWithPromo(params: {
+  // Set of already processed deposit IDs to prevent double crediting of commissions
+  private creditedDepositIds: Set<string> = new Set();
+
+  private loadCreditedDepositIds() {
+    try {
+      const raw = localStorage.getItem('cb_credited_inf_deposit_ids');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((id: string) => this.creditedDepositIds.add(id));
+        }
+      }
+    } catch {}
+  }
+
+  // Credit Influencer Commission ONLY WHEN Admin Approves Deposit
+  public creditCommissionOnDepositApproval(params: {
     depositId: string;
     traderName: string;
     traderEmail?: string;
     depositAmount: number;
     promoCode: string;
-  }): { success: boolean; bonusAmount: number; totalCredited: number } {
+  }): { success: boolean; credited: boolean; bonusAmount: number; totalCredited: number } {
+    this.loadCreditedDepositIds();
     const { depositId, traderName, traderEmail, depositAmount, promoCode } = params;
-    const influencer = this.findInfluencerByPromoCode(promoCode);
 
     const bonusInfo = calculateDepositBonus(depositAmount);
     const bonusAmount = bonusInfo.bonusAmount;
     const totalCredited = depositAmount + bonusAmount;
 
+    // Deduplication check: Guarantee each deposit is approved and credited exactly once!
+    if (this.creditedDepositIds.has(depositId)) {
+      return { success: true, credited: false, bonusAmount, totalCredited };
+    }
+    this.creditedDepositIds.add(depositId);
+    try {
+      localStorage.setItem('cb_credited_inf_deposit_ids', JSON.stringify(Array.from(this.creditedDepositIds).slice(-300)));
+    } catch {}
+
+    const influencer = this.findInfluencerByPromoCode(promoCode);
     if (influencer) {
       const commission = bonusInfo.influencerCommission; // 20% of depositAmount
       influencer.availableBalance = parseFloat((influencer.availableBalance + commission).toFixed(2));
@@ -706,7 +730,18 @@ class InfluencerService {
       localStorage.setItem(STORAGE_KEY_ACTIVE_PROMO_BONUS, updatedBonus.toString());
     }
 
-    return { success: true, bonusAmount, totalCredited };
+    return { success: true, credited: true, bonusAmount, totalCredited };
+  }
+
+  // Deprecated direct call: Only forwards if not already processed on approval
+  public processDepositWithPromo(params: {
+    depositId: string;
+    traderName: string;
+    traderEmail?: string;
+    depositAmount: number;
+    promoCode: string;
+  }): { success: boolean; bonusAmount: number; totalCredited: number } {
+    return this.creditCommissionOnDepositApproval(params);
   }
 
   // Get active promo bonus for trader

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Bell, AlertTriangle, Sparkles, Info, ShieldCheck, Tag, Copy, Check, ArrowRight, MessageSquare } from 'lucide-react';
 import { sound } from '../../utils/audio';
-import { subscribeNoticesFromFirebase } from '../../services/firebaseRequests';
+import { subscribeNoticesFromFirebase, fetchNoticesFromFirebase } from '../../services/firebaseRequests';
 
 interface Notice {
   id: string;
@@ -26,7 +26,16 @@ export const NoticesModal: React.FC<NoticesModalProps> = ({
   onOpenDeposit,
   onOpenSupport,
 }) => {
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const [notices, setNotices] = useState<Notice[]>(() => {
+    try {
+      const raw = localStorage.getItem('cb_admin_notices');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<'ALL' | 'PROMO' | 'INFO' | 'ALERT'>('ALL');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -51,6 +60,41 @@ export const NoticesModal: React.FC<NoticesModalProps> = ({
     setTimeout(() => setCopiedCode(null), 2500);
   };
 
+  const loadNotices = async () => {
+    setIsLoading(true);
+    try {
+      const [res, fbList] = await Promise.all([
+        fetch('/api/notices/active').then(r => r.json()).catch(() => []),
+        fetchNoticesFromFirebase().catch(() => []),
+      ]);
+
+      let localNotices: Notice[] = [];
+      try {
+        const raw = localStorage.getItem('cb_admin_notices');
+        if (raw) localNotices = JSON.parse(raw);
+      } catch {}
+
+      const map = new Map<string, Notice>();
+      if (Array.isArray(res)) res.forEach((n: any) => map.set(n.id, n));
+      if (Array.isArray(fbList)) fbList.forEach((n: any) => map.set(n.id, n));
+      localNotices.forEach((n) => {
+        if (!map.has(n.id)) map.set(n.id, n);
+      });
+
+      const combined = Array.from(map.values())
+        .filter((n) => n.active !== false)
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+      if (combined.length > 0) {
+        setNotices(combined);
+      }
+    } catch {
+      // fallback
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -59,11 +103,31 @@ export const NoticesModal: React.FC<NoticesModalProps> = ({
     // Real-time Firestore sync
     const unsubscribe = subscribeNoticesFromFirebase((fireNotices) => {
       if (Array.isArray(fireNotices) && fireNotices.length > 0) {
-        setNotices(fireNotices.filter((n: any) => n.active !== false));
+        setNotices((prev) => {
+          const map = new Map<string, Notice>();
+          prev.forEach(n => map.set(n.id, n));
+          fireNotices.forEach((n: any) => {
+            if (n.active !== false && !n.deleted) {
+              map.set(n.id, n);
+            } else {
+              map.delete(n.id);
+            }
+          });
+          const updated = Array.from(map.values()).sort(
+            (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+          );
+          try {
+            localStorage.setItem('cb_admin_notices', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
       }
     });
 
-    const handleUpdated = () => {
+    const handleUpdated = (e: any) => {
+      if (e?.detail) {
+        setNotices((prev) => [e.detail, ...prev.filter(n => n.id !== e.detail.id)]);
+      }
       loadNotices();
     };
     window.addEventListener('cb_notices_updated', handleUpdated);
@@ -73,21 +137,6 @@ export const NoticesModal: React.FC<NoticesModalProps> = ({
       window.removeEventListener('cb_notices_updated', handleUpdated);
     };
   }, [isOpen]);
-
-  const loadNotices = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/notices/active');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setNotices(data);
-      }
-    } catch {
-      // fallback
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   if (!isOpen) return null;
 

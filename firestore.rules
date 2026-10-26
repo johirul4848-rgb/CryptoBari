@@ -63,6 +63,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // System Settings (Binance Pay Gateway, Merchant Settings, QR codes)
+    match /system_settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Referral records & Commission ledger
+    match /referrals/{refId} {
+      allow read, write: if true;
+    }
+
     // Trade settlement history
     match /trades/{tradeId} {
       allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();

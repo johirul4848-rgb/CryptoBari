@@ -384,10 +384,53 @@ export const App: React.FC = () => {
       }
     };
 
+    const handleWithdrawalRejected = (e: any) => {
+      const detail = e.detail;
+      if (detail && detail.id && detail.amount > 0) {
+        const rawCredited = localStorage.getItem('cb_refunded_withdrawal_ids');
+        const setRefunded: Set<string> = new Set(rawCredited ? JSON.parse(rawCredited) : []);
+        if (setRefunded.has(detail.id)) return;
+        setRefunded.add(detail.id);
+        try {
+          localStorage.setItem('cb_refunded_withdrawal_ids', JSON.stringify(Array.from(setRefunded)));
+        } catch {}
+
+        const refundAmt = Number(detail.amount);
+        sound.playWin();
+        setWallet(prev => {
+          const updatedLive = Number((prev.liveBalance + refundAmt).toFixed(2));
+          if (auth.currentUser) {
+            updateDoc(doc(db, 'users', auth.currentUser.uid), {
+              'wallet.liveBalance': updatedLive,
+            }).catch(() => {});
+          }
+          return {
+            ...prev,
+            liveBalance: updatedLive,
+          };
+        });
+
+        setTransactions(prev => [
+          {
+            id: 'TX-REFUND-' + detail.id,
+            type: 'DEPOSIT',
+            amount: refundAmt,
+            currency: 'USD',
+            status: 'COMPLETED',
+            timestamp: Date.now(),
+            description: `Withdrawal #${detail.id} Rejected & Refunded to Live Balance (${detail.reason || 'Verification requirement'})`,
+          },
+          ...prev,
+        ]);
+      }
+    };
+
     window.addEventListener('cb_deposit_approved', handleDepositApproved);
+    window.addEventListener('cb_withdrawal_rejected', handleWithdrawalRejected);
     window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener('cb_deposit_approved', handleDepositApproved);
+      window.removeEventListener('cb_withdrawal_rejected', handleWithdrawalRejected);
       window.removeEventListener('storage', handleStorage);
     };
   }, [creditApprovedDeposit]);
@@ -958,6 +1001,9 @@ export const App: React.FC = () => {
                       chartType={chartType}
                       onChartTypeChange={setChartType}
                       accountMode={accountMode}
+                      availableBalance={availableBalance}
+                      onPlaceTrade={handlePlaceTrade}
+                      isPlacingTrade={isPlacingTrade}
                       connectionStatus={connectionStatus}
                       activeTrades={activeTrades.filter(t => t.symbol === activeSymbol.symbol)}
                       onOpenSelector={() => setIsAssetSelectorOpen(true)}

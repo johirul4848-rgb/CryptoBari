@@ -217,16 +217,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
           promoCode: cleanPromo || undefined,
         });
         setIsConfirmationModalOpen(true);
-
-        if (cleanPromo) {
-          influencerService.processDepositWithPromo({
-            depositId: data.deposit.id,
-            traderName: userName,
-            traderEmail: userEmail,
-            depositAmount,
-            promoCode: cleanPromo,
-          });
-        }
+        // Commission will strictly be added to influencer account when Admin approves the deposit request
         onDepositSuccess(depositAmount, 'Binance Pay', senderBinanceId.trim(), txHash.trim());
       } else {
         setErrorMsg(data.error || 'Failed to submit deposit request.');
@@ -305,15 +296,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
         promoCode: cleanPromo || undefined,
       });
       setIsConfirmationModalOpen(true);
-      if (cleanPromo) {
-        influencerService.processDepositWithPromo({
-          depositId: mockDeposit.id,
-          traderName: userName,
-          traderEmail: userEmail,
-          depositAmount,
-          promoCode: cleanPromo,
-        });
-      }
+      // Commission will strictly be added to influencer account when Admin approves the deposit request
       onDepositSuccess(depositAmount, 'Binance Pay', senderBinanceId.trim(), txHash.trim());
     } finally {
       setIsSubmitting(false);

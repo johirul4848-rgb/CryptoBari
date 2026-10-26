@@ -510,6 +510,16 @@ export async function rejectWithdrawalInFirebase(withdrawal: {
         localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
       }
       window.dispatchEvent(new CustomEvent('cb_withdrawals_updated'));
+      window.dispatchEvent(
+        new CustomEvent('cb_withdrawal_rejected', {
+          detail: {
+            id: withdrawal.id,
+            amount,
+            userId: withdrawal.userId,
+            reason: withdrawal.reason || 'Verification requirement',
+          },
+        })
+      );
     } catch {}
 
     return true;
@@ -625,6 +635,20 @@ export async function deleteNoticeFromFirebase(id: string): Promise<boolean> {
   }
 }
 
+export async function fetchNoticesFromFirebase(): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'notices');
+    const snap = await getDocs(colRef);
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return list
+      .filter((n: any) => n.active !== false && !n.deleted)
+      .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'notices');
+    return [];
+  }
+}
+
 /**
  * Real-time synchronization for 24/7 Live Support Tickets & Messages
  */
@@ -651,6 +675,18 @@ export function subscribeSupportTicketsFromFirebase(
     );
   } catch {
     return () => {};
+  }
+}
+
+export async function fetchSupportTicketsFromFirebase(): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'support_tickets');
+    const snap = await getDocs(colRef);
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return list.sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'support_tickets');
+    return [];
   }
 }
 
@@ -702,5 +738,162 @@ export async function updateTicketStatusInFirebase(ticketId: string, status: str
     return false;
   }
 }
+
+/**
+ * Binance Gateway QR Code and Pay Settings stored persistently in Firestore 'system_settings/binance_gateway'
+ */
+export async function saveBinanceGatewaySettingsToFirebase(settings: {
+  binanceId: string;
+  merchantName?: string;
+  qrCodeUrl?: string;
+  qrImage?: string;
+  notes?: string;
+  instructions?: string;
+}): Promise<boolean> {
+  try {
+    const docRef = doc(db, 'system_settings', 'binance_gateway');
+    const payload = {
+      binanceId: settings.binanceId || '794380283',
+      merchantName: settings.merchantName || 'CryptoBari',
+      qrCodeUrl: settings.qrCodeUrl || settings.qrImage || '',
+      qrImage: settings.qrImage || settings.qrCodeUrl || '',
+      notes: settings.notes || settings.instructions || 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
+      instructions: settings.instructions || settings.notes || 'Official verified Binance Pay Receiver for CryptoBari Trading Platform.',
+      updatedAt: Date.now(),
+    };
+    await setDoc(docRef, payload, { merge: true });
+    try {
+      localStorage.setItem('cb_binance_gateway_settings', JSON.stringify(payload));
+      window.dispatchEvent(new CustomEvent('cb_gateway_updated', { detail: payload }));
+    } catch {}
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'system_settings/binance_gateway');
+    return false;
+  }
+}
+
+export async function fetchBinanceGatewaySettingsFromFirebase(): Promise<any> {
+  try {
+    const docRef = doc(db, 'system_settings', 'binance_gateway');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      try {
+        localStorage.setItem('cb_binance_gateway_settings', JSON.stringify(data));
+      } catch {}
+      return data;
+    }
+  } catch (error) {
+    console.warn('fetchBinanceGatewaySettingsFromFirebase notice:', error);
+  }
+  try {
+    const raw = localStorage.getItem('cb_binance_gateway_settings');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+export function subscribeBinanceGatewaySettingsFromFirebase(
+  onUpdate: (settings: any) => void
+): () => void {
+  try {
+    const docRef = doc(db, 'system_settings', 'binance_gateway');
+    return onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        try {
+          localStorage.setItem('cb_binance_gateway_settings', JSON.stringify(data));
+        } catch {}
+        onUpdate(data);
+      }
+    }, (err) => console.warn('subscribeBinanceGatewaySettings error:', err));
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * Fetch all registered users & trader profiles across Firestore collections
+ */
+export async function fetchAllUsersFromFirebase(): Promise<any[]> {
+  try {
+    const usersCol = collection(db, 'users');
+    const snap = await getDocs(usersCol);
+    const usersMap = new Map<string, any>();
+
+    snap.forEach((d) => {
+      const data = d.data();
+      const email = data.email || `${d.id}@cryptobari.com`;
+      usersMap.set(email.toLowerCase(), {
+        id: d.id,
+        name: data.displayName || data.name || email.split('@')[0],
+        email,
+        country: data.country || 'International',
+        role: data.role || (email.toLowerCase() === 'johirul4848@gmail.com' ? 'ADMIN' : 'USER'),
+        kycStatus: data.kycStatus || 'VERIFIED',
+        liveBalance: typeof data.wallet?.liveBalance === 'number' ? data.wallet.liveBalance : 0,
+        demoBalance: typeof data.wallet?.demoBalance === 'number' ? data.wallet.demoBalance : 10000,
+        status: data.status || 'ACTIVE',
+        totalDeposited: typeof data.totalDeposited === 'number' ? data.totalDeposited : 0,
+        totalWithdrawn: typeof data.totalWithdrawn === 'number' ? data.totalWithdrawn : 0,
+        registeredAt: data.createdAt || Date.now(),
+      });
+    });
+
+    // Also scan deposit requests to include depositors who registered
+    try {
+      const depSnap = await getDocs(collection(db, 'deposit_requests'));
+      depSnap.forEach((d) => {
+        const data = d.data();
+        if (data.userEmail) {
+          const key = data.userEmail.toLowerCase();
+          if (!usersMap.has(key)) {
+            usersMap.set(key, {
+              id: data.userId || `usr_${data.userEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
+              name: data.userName || data.userEmail.split('@')[0],
+              email: data.userEmail,
+              country: 'International',
+              role: 'USER',
+              kycStatus: 'VERIFIED',
+              liveBalance: data.status === 'APPROVED' ? Number(data.amount) || 0 : 0,
+              demoBalance: 10000,
+              status: 'ACTIVE',
+              totalDeposited: data.status === 'APPROVED' ? Number(data.amount) || 0 : 0,
+              totalWithdrawn: 0,
+              registeredAt: new Date(data.createdAt || Date.now()).getTime(),
+            });
+          } else {
+            const existing = usersMap.get(key);
+            if (data.status === 'APPROVED') {
+              existing.totalDeposited = (existing.totalDeposited || 0) + (Number(data.amount) || 0);
+            }
+          }
+        }
+      });
+    } catch {}
+
+    return Array.from(usersMap.values());
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'users');
+    return [];
+  }
+}
+
+export async function saveUserToFirebase(user: any): Promise<boolean> {
+  try {
+    const cleanId = String(user.id || (user.email ? user.email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'usr_' + Date.now()));
+    const userRef = doc(db, 'users', cleanId);
+    await setDoc(userRef, {
+      ...user,
+      updatedAt: Date.now(),
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `users/${user.id || 'new'}`);
+    return false;
+  }
+}
+
 
 
