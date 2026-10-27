@@ -313,6 +313,8 @@ export const DepositPage: React.FC<DepositPageProps> = ({
           totalCredited: totalCredited,
           promoCode: cleanPromo || undefined,
         });
+        setIsConfirmationModalOpen(true);
+        sound.playWin();
         // Commission will strictly be added to influencer account when Admin approves the deposit request
         setRecentDeposits(prev => [
           {

@@ -38,8 +38,8 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
 }) => {
   const activePromoBonus = influencerService.getActivePromoBonus();
   const totalBonus = Number(((bonusBalance || 0) + activePromoBonus).toFixed(2));
-  // Real cash liveBalance is the withdrawable portion
-  const withdrawableBalance = Math.max(0, parseFloat((liveBalance).toFixed(2)));
+  // Real cash withdrawable balance is strictly (liveBalance - totalBonus)
+  const withdrawableBalance = Math.max(0, Number((liveBalance - totalBonus).toFixed(2)));
 
   const [receiverBinanceId, setReceiverBinanceId] = useState<string>('');
   const [withdrawAmount, setWithdrawAmount] = useState<number>(() => Math.max(10, Math.min(50, withdrawableBalance)));
@@ -58,7 +58,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   const handleSetPercent = (pct: number) => {
     sound.playClick();
     if (withdrawableBalance <= 0) return;
-    const calculated = Math.floor(withdrawableBalance * pct);
+    const calculated = parseFloat((withdrawableBalance * pct).toFixed(2));
     setWithdrawAmount(Math.max(0, calculated));
   };
 
@@ -67,8 +67,8 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     setErrorMsg(null);
 
     if (!isBalanceEligible) {
-      if (totalBonus > 0 && (liveBalance + totalBonus) >= MIN_WITHDRAWAL) {
-        setErrorMsg(`Your withdrawable real balance is $${withdrawableBalance.toFixed(2)} USD. Your bonus balance of $${totalBonus.toFixed(2)} USD is strictly for trading and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`);
+      if (totalBonus > 0 && liveBalance >= MIN_WITHDRAWAL) {
+        setErrorMsg(`Your real withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD. Your promotional bonus of $${totalBonus.toFixed(2)} USD is strictly for trading margin and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`);
       } else {
         setErrorMsg(`Your withdrawable live account balance ($${withdrawableBalance.toFixed(2)}) is below the minimum required withdrawal threshold of $10.00.`);
       }
@@ -81,7 +81,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
     }
 
     if (withdrawAmount > withdrawableBalance) {
-      setErrorMsg(`Cannot withdraw bonus amount ($${totalBonus.toFixed(2)} USD). Bonus credits are strictly for trading and cannot be withdrawn. Your withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD.`);
+      setErrorMsg(`Cannot withdraw bonus funds. Your live balance is $${liveBalance.toFixed(2)} USD, which includes a non-withdrawable promotional trading bonus of $${totalBonus.toFixed(2)} USD. Your actual withdrawable cash is $${withdrawableBalance.toFixed(2)} USD.`);
       return;
     }
 
@@ -105,7 +105,9 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
           binanceId: receiverBinanceId.trim(),
           network: 'Binance Pay UID Transfer',
           currentLiveBalance: liveBalance,
-          activePromoBonus,
+          activePromoBonus: totalBonus,
+          bonusBalance: totalBonus,
+          totalBonus,
           userName,
           userEmail,
         }),

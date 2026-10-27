@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { influencerService } from '../../services/influencerService';
-import { recordWithdrawalToFirebase } from '../../services/firebaseRequests';
+import { recordWithdrawalToFirebase, fetchWithdrawalsFromFirebase } from '../../services/firebaseRequests';
 import { TransactionWaitConfirmationModal, ConfirmationModalData } from './TransactionWaitConfirmationModal';
 
 interface WithdrawalPageProps {
@@ -40,8 +40,8 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
 }) => {
   const activePromoBonus = influencerService.getActivePromoBonus();
   const totalBonus = Number(((bonusBalance || 0) + activePromoBonus).toFixed(2));
-  // Real cash liveBalance is the withdrawable portion
-  const withdrawableBalance = Math.max(0, parseFloat((liveBalance).toFixed(2)));
+  // Real cash withdrawable balance is strictly (liveBalance - totalBonus)
+  const withdrawableBalance = Math.max(0, Number((liveBalance - totalBonus).toFixed(2)));
 
   const [receiverBinanceId, setReceiverBinanceId] = useState<string>('');
   const [withdrawAmount, setWithdrawAmount] = useState<number>(() =>
@@ -60,21 +60,67 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
   const isBalanceEligible = withdrawableBalance >= MIN_WITHDRAWAL;
 
   useEffect(() => {
-    // Fetch past withdrawals
-    const fetchWithdrawals = () => {
-      fetch('/api/admin/withdrawals')
-        .then((res) => res.json())
-        .then((data) => {
-          if (Array.isArray(data)) {
-            setPastWithdrawals(data.slice(0, 8));
+    // Robustly fetch all past withdrawals from Firebase, localStorage, and API server
+    const fetchWithdrawals = async () => {
+      const recordsMap = new Map<string, any>();
+
+      // 1. From local trader storage
+      try {
+        const rawTrader = localStorage.getItem('cb_trader_withdrawals');
+        if (rawTrader) {
+          const list = JSON.parse(rawTrader);
+          if (Array.isArray(list)) {
+            list.forEach(w => { if (w && w.id) recordsMap.set(w.id, w); });
           }
-        })
-        .catch(() => {});
+        }
+      } catch {}
+
+      // 2. From shared admin/user withdrawals storage
+      try {
+        const rawShared = localStorage.getItem('cb_admin_shared_withdrawals');
+        if (rawShared) {
+          const list = JSON.parse(rawShared);
+          if (Array.isArray(list)) {
+            list.forEach(w => { if (w && w.id) recordsMap.set(w.id, w); });
+          }
+        }
+      } catch {}
+
+      // 3. From Firestore
+      try {
+        const fbDocs = await fetchWithdrawalsFromFirebase();
+        if (Array.isArray(fbDocs)) {
+          fbDocs.forEach(w => { if (w && w.id) recordsMap.set(w.id, w); });
+        }
+      } catch {}
+
+      // 4. From backend API
+      try {
+        const res = await fetch('/api/admin/withdrawals');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            data.forEach(w => { if (w && w.id) recordsMap.set(w.id, w); });
+          }
+        }
+      } catch {}
+
+      const merged = Array.from(recordsMap.values()).sort((a, b) => {
+        const tA = typeof a.createdAt === 'number' ? a.createdAt : new Date(a.createdAt || 0).getTime();
+        const tB = typeof b.createdAt === 'number' ? b.createdAt : new Date(b.createdAt || 0).getTime();
+        return tB - tA;
+      });
+
+      setPastWithdrawals(merged);
     };
 
     fetchWithdrawals();
     window.addEventListener('cb_withdrawals_updated', fetchWithdrawals);
-    return () => window.removeEventListener('cb_withdrawals_updated', fetchWithdrawals);
+    window.addEventListener('storage', fetchWithdrawals);
+    return () => {
+      window.removeEventListener('cb_withdrawals_updated', fetchWithdrawals);
+      window.removeEventListener('storage', fetchWithdrawals);
+    };
   }, []);
 
   const handleSetPercent = (pct: number) => {
@@ -89,9 +135,9 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
     setErrorMsg(null);
 
     if (!isBalanceEligible) {
-      if (totalBonus > 0 && (liveBalance + totalBonus) >= MIN_WITHDRAWAL) {
+      if (totalBonus > 0 && liveBalance >= MIN_WITHDRAWAL) {
         setErrorMsg(
-          `Your withdrawable real balance is $${withdrawableBalance.toFixed(2)} USD. Your bonus balance of $${totalBonus.toFixed(2)} USD is strictly for trading and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`
+          `Your real withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD. Your promotional bonus of $${totalBonus.toFixed(2)} USD is strictly for trading margin and cannot be withdrawn. Minimum withdrawal is $10.00 USD.`
         );
       } else {
         setErrorMsg(
@@ -114,7 +160,7 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
 
     if (withdrawAmount > withdrawableBalance) {
       setErrorMsg(
-        `Cannot withdraw bonus funds. Bonus amount of $${totalBonus.toFixed(2)} USD is reserved strictly for trading. Your withdrawable cash balance is $${withdrawableBalance.toFixed(2)} USD.`
+        `Cannot withdraw bonus funds. Your live balance is $${liveBalance.toFixed(2)} USD, which includes a non-withdrawable promotional trading bonus of $${totalBonus.toFixed(2)} USD. Your actual withdrawable cash is $${withdrawableBalance.toFixed(2)} USD.`
       );
       return;
     }
@@ -138,6 +184,9 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
           receiverBinanceId: receiverBinanceId.trim(),
           binanceId: receiverBinanceId.trim(),
           currentLiveBalance: liveBalance,
+          activePromoBonus: totalBonus,
+          bonusBalance: totalBonus,
+          totalBonus,
           network: 'Binance Pay UID Transfer',
           userName,
           userEmail,
@@ -176,12 +225,18 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
         });
         setIsConfirmationModalOpen(true);
 
-        // Sync with shared storage for instant visibility in Admin Panel
+        // Sync with shared storage and trader storage for permanent visibility
         try {
           const raw = localStorage.getItem('cb_admin_shared_withdrawals');
           const existing = raw ? JSON.parse(raw) : [];
           const updated = [record, ...existing.filter((x: any) => x.id !== record.id)];
           localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+
+          const rawTrader = localStorage.getItem('cb_trader_withdrawals');
+          const existingTrader = rawTrader ? JSON.parse(rawTrader) : [];
+          const updatedTrader = [record, ...existingTrader.filter((x: any) => x.id !== record.id)];
+          localStorage.setItem('cb_trader_withdrawals', JSON.stringify(updatedTrader));
+
           window.dispatchEvent(new Event('cb_withdrawals_updated'));
         } catch {
           // ignore
@@ -246,6 +301,12 @@ export const WithdrawalPage: React.FC<WithdrawalPageProps> = ({
         const existing = raw ? JSON.parse(raw) : [];
         const updated = [mockRecord, ...existing.filter((x: any) => x.id !== mockRecord.id)];
         localStorage.setItem('cb_admin_shared_withdrawals', JSON.stringify(updated));
+
+        const rawTrader = localStorage.getItem('cb_trader_withdrawals');
+        const existingTrader = rawTrader ? JSON.parse(rawTrader) : [];
+        const updatedTrader = [mockRecord, ...existingTrader.filter((x: any) => x.id !== mockRecord.id)];
+        localStorage.setItem('cb_trader_withdrawals', JSON.stringify(updatedTrader));
+
         window.dispatchEvent(new Event('cb_withdrawals_updated'));
       } catch {
         // ignore

@@ -1083,15 +1083,17 @@ async function startServer() {
     }
 
     const effectiveBalance = Math.max(walletState.liveBalance, !isNaN(clientBal) ? clientBal : 0);
-    const promoBonusDeduction = Math.max(
-      walletState.bonusBalance || 0,
-      typeof activePromoBonus === 'number' ? Math.max(0, activePromoBonus) : (parseFloat(activePromoBonus) || 0)
-    );
+    const clientBonus = typeof activePromoBonus === 'number'
+      ? activePromoBonus
+      : (parseFloat(activePromoBonus || req.body.bonusBalance || req.body.totalBonus) || 0);
+    const promoBonusDeduction = typeof clientBonus === 'number' && !isNaN(clientBonus) && clientBonus > 0
+      ? clientBonus
+      : (walletState.bonusBalance || 0);
     const withdrawableBalance = Math.max(0, parseFloat((effectiveBalance - promoBonusDeduction).toFixed(2)));
 
     if (withdrawableBalance < 10) {
       return res.status(400).json({
-        error: `Minimum withdrawable balance of $10.00 USD required. (Note: Promotional trading bonus of $${promoBonusDeduction.toFixed(2)} USD is strictly for trading margin and cannot be withdrawn).`
+        error: `Minimum withdrawable cash balance of $10.00 USD required. (Note: Promotional trading bonus of $${promoBonusDeduction.toFixed(2)} USD is strictly for trading margin and cannot be withdrawn).`
       });
     }
     if (numAmount > withdrawableBalance) {
@@ -1100,8 +1102,9 @@ async function startServer() {
       });
     }
 
-    // Deduct from live balance immediately into pending escrow
+    // Deduct from live balance immediately into pending escrow and forfeit bonus
     walletState.liveBalance = Math.max(0, effectiveBalance - numAmount);
+    walletState.bonusBalance = 0;
 
     const targetBinanceId = (receiverBinanceId || binanceId || address || '').toString().trim() || '794380283';
 

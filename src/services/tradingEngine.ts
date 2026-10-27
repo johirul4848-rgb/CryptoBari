@@ -1,5 +1,6 @@
 import { Trade, AccountMode, TradeDirection, TradeResult } from '../types';
 import { auth, db } from '../lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { otcPriceEngine } from './otcEngine';
 import { binanceMarketData } from './binanceMarketData';
@@ -35,6 +36,17 @@ class TradingEngine {
     this.loadFromStorage();
     this.startSettlementLoop();
     this.checkServerHealth();
+
+    // Listen for auth state changes and sync without losing any active trades
+    try {
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          this.loadFromStorage();
+          this.saveToStorage();
+          this.emitChange();
+        }
+      });
+    } catch {}
   }
 
   public static getInstance(): TradingEngine {
@@ -51,23 +63,50 @@ class TradingEngine {
 
   private loadFromStorage() {
     try {
-      const activeRaw = localStorage.getItem(`${this.getStorageKeyPrefix()}_active`);
-      if (activeRaw) {
-        const parsed: Trade[] = JSON.parse(activeRaw);
-        if (Array.isArray(parsed)) {
-          for (const t of parsed) {
-            // Keep if not expired, or let settlement process immediately if expired
-            if (t.status === 'ACTIVE') {
-              this.activeTrades.set(t.id, t);
+      const activeCandidates: Trade[] = [];
+
+      // 1. Primary unified storage key
+      const unifiedActive = localStorage.getItem('cb_active_trades');
+      if (unifiedActive) {
+        const parsed: Trade[] = JSON.parse(unifiedActive);
+        if (Array.isArray(parsed)) activeCandidates.push(...parsed);
+      }
+
+      // 2. User-specific storage key
+      const userActive = localStorage.getItem(`${this.getStorageKeyPrefix()}_active`);
+      if (userActive) {
+        const parsed: Trade[] = JSON.parse(userActive);
+        if (Array.isArray(parsed)) activeCandidates.push(...parsed);
+      }
+
+      // 3. Scan any legacy or other trader keys in localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('cb_trades_') && key.endsWith('_active') && key !== `${this.getStorageKeyPrefix()}_active`) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const list: Trade[] = JSON.parse(raw);
+              if (Array.isArray(list)) activeCandidates.push(...list);
             }
+          } catch {}
+        }
+      }
+
+      // De-duplicate by trade ID and restore active trades
+      for (const t of activeCandidates) {
+        if (t && t.id && t.status === 'ACTIVE') {
+          if (!this.activeTrades.has(t.id)) {
+            this.activeTrades.set(t.id, t);
           }
         }
       }
 
-      const historyRaw = localStorage.getItem(`${this.getStorageKeyPrefix()}_history`);
+      // Restore trade history
+      const historyRaw = localStorage.getItem('cb_trade_history') || localStorage.getItem(`${this.getStorageKeyPrefix()}_history`);
       if (historyRaw) {
         const parsed: Trade[] = JSON.parse(historyRaw);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && this.historyTrades.length === 0) {
           this.historyTrades = parsed.slice(0, 300);
         }
       }
@@ -79,8 +118,13 @@ class TradingEngine {
   private saveToStorage() {
     try {
       const activeList = Array.from(this.activeTrades.values());
+      // Save to both global unified key and user-specific key
+      localStorage.setItem('cb_active_trades', JSON.stringify(activeList));
       localStorage.setItem(`${this.getStorageKeyPrefix()}_active`, JSON.stringify(activeList));
-      localStorage.setItem(`${this.getStorageKeyPrefix()}_history`, JSON.stringify(this.historyTrades.slice(0, 300)));
+
+      const histList = this.historyTrades.slice(0, 300);
+      localStorage.setItem('cb_trade_history', JSON.stringify(histList));
+      localStorage.setItem(`${this.getStorageKeyPrefix()}_history`, JSON.stringify(histList));
     } catch {
       // quota or private browsing
     }
@@ -246,6 +290,10 @@ class TradingEngine {
         // Time expired! Settle this trade authoritatively
         let exitPrice = this.getLatestPrice(trade.symbol);
         if (!exitPrice || exitPrice <= 0 || isNaN(exitPrice)) {
+          // If ticks haven't arrived yet after a reload, wait up to 6s for the first tick
+          if (now - trade.expiryTimestamp < 6000) {
+            continue;
+          }
           exitPrice = trade.entryPrice;
         }
 

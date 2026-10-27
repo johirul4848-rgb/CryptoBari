@@ -978,12 +978,18 @@ export const ChartContainer: React.FC<ChartContainerProps> = ({
       document.exitFullscreen().catch(() => {});
     }
     setIsFullscreen(false);
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
   };
 
   useEffect(() => {
     const handleFsChange = () => {
       if (!document.fullscreenElement) {
         setIsFullscreen(false);
+        setTimeout(() => {
+          window.dispatchEvent(new Event('resize'));
+        }, 50);
       }
     };
     document.addEventListener('fullscreenchange', handleFsChange);

@@ -140,9 +140,9 @@ export const TradePanel: React.FC<TradePanelProps> = ({
   const cleanPairName = symbol.displayPair.replace(/\s*\(OTC\)/gi, '').replace(/\/OTC/gi, '').trim();
 
   return (
-    <div className="w-full lg:w-72 xl:w-76 flex flex-col bg-[#161a25] border-l border-slate-800/80 select-none shrink-0 h-full overflow-hidden text-slate-200 text-xs">
+    <div className="w-full lg:w-72 xl:w-76 flex flex-col bg-[#161a25] border-l border-slate-800/80 select-none shrink-0 h-full overflow-y-auto custom-scrollbar text-slate-200 text-xs">
       {/* 1. TOP ASSET HEADER */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60 bg-[#191e2b]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60 bg-[#191e2b] shrink-0">
         <div className="flex items-center gap-2">
           <AssetIcon symbol={symbol.symbol} size="md" showFlag={true} />
           <div className="flex flex-col">
@@ -159,8 +159,8 @@ export const TradePanel: React.FC<TradePanelProps> = ({
         </div>
       </div>
 
-      {/* 2. TIME & INVESTMENT FORM CONTAINER */}
-      <div className="px-4 py-2 space-y-3">
+      {/* 2. TIME & INVESTMENT FORM CONTAINER (SHRINK-0: Up & Down always visible) */}
+      <div className="px-4 py-2 space-y-3 shrink-0">
         {/* TIME INPUT CARD */}
         <div className="relative pt-1">
           <div className="relative bg-[#1c2230] border border-slate-700/60 rounded-lg p-2.5">

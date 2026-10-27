@@ -1017,7 +1017,7 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Right Desktop Trading Panel (Quotex style) */}
-                <div className="hidden lg:flex h-full">
+                <div className="hidden lg:flex h-full shrink-0">
                   <TradePanel
                     symbol={activeSymbol}
                     currentPrice={currentPrice}

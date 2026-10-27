@@ -114,59 +114,73 @@ export const TransactionWaitConfirmationModal: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* Main Status & Short Reassuring Note */}
+          {/* Main Status & Reassuring Note */}
           <div className="text-center pt-3 pb-2">
-            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl mb-2 shadow-md bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-2 shadow-lg bg-gradient-to-tr from-amber-500 via-[#F0B90B] to-yellow-400 text-slate-950">
               {isDeposit ? (
-                <Zap className="w-5 h-5 fill-slate-950 stroke-slate-950" />
+                <Zap className="w-6 h-6 fill-slate-950 stroke-slate-950 animate-bounce" />
               ) : (
-                <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
+                <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
               )}
             </div>
 
-            <h3 className="text-sm sm:text-base font-black text-white tracking-tight">
-              {isDeposit ? 'Deposit Request Received' : 'Withdrawal Queued for Dispatch'}
+            <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
+              {isDeposit ? '🎉 ডিপোজিট রিকোয়েস্ট সফলভাবে সাবমিট হয়েছে!' : 'Withdrawal Queued for Dispatch'}
             </h3>
-
-            <p className="text-[11px] sm:text-xs text-slate-300 mt-1 leading-snug">
-              {isDeposit
-                ? 'Your request is submitted to Treasury. Please hold on a moment while Binance Pay matches the UID.'
-                : 'Your payout is registered and being cleared by Treasury. Funds will transfer directly to your Binance Pay UID.'}
+            <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mt-0.5">
+              {isDeposit ? 'Deposit Request Submitted Successfully' : 'Payout Registered'}
             </p>
+
+            <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-left">
+              <p className="text-xs text-amber-200/90 leading-relaxed font-medium">
+                {isDeposit
+                  ? 'আপনার ডিপোজিট রিকোয়েস্ট ও ট্রানজ্যাকশন আইডি সফলভাবে বাইন্যান্স পে ভেরিফিকেশন সেন্টারে পাঠানো হয়েছে। স্বয়ংক্রিয় ব্লকচেইন নোড কনফার্মেশন শেষ হলে ২ থেকে ৫ মিনিটের মধ্যে সরাসরি আপনার লাইভ অ্যাকাউন্টে ব্যালেন্স যুক্ত হয়ে যাবে।'
+                  : 'Your payout is registered and being cleared by Treasury. Funds will transfer directly to your Binance Pay UID.'}
+              </p>
+              {isDeposit && (
+                <p className="text-[11px] text-slate-400 mt-1.5 leading-snug">
+                  Your transaction has been routed to Binance Pay verification nodes. Balance will credit to your Live Account automatically within 2–5 minutes.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Compact Timer & Progression Bar */}
           <div className="my-2 p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-400 flex items-center gap-1 font-medium">
-                <Clock className="w-3 h-3 text-amber-400" />
-                Est. Verification Time
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                {isDeposit ? 'স্বয়ংক্রিয় ভেরিফিকেশন সময় (Est. Time)' : 'Est. Verification Time'}
               </span>
               <span className="font-mono font-black text-amber-400">
                 {formatTime(countdownSeconds)}
               </span>
             </div>
 
-            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all duration-1000 ease-out"
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 via-[#F0B90B] to-emerald-400 transition-all duration-1000 ease-out"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
 
             <div className="flex items-center justify-between text-[9px] font-semibold text-slate-400 pt-0.5">
-              <span className="text-emerald-400 flex items-center gap-0.5">
-                <CheckCircle2 className="w-2.5 h-2.5" /> Received
+              <span className="text-emerald-400 flex items-center gap-0.5 font-bold">
+                <CheckCircle2 className="w-2.5 h-2.5" /> {isDeposit ? 'অনুরোধ গৃহীত' : 'Received'}
               </span>
-              <span className="text-amber-400 animate-pulse">Auditing</span>
-              <span>{isDeposit ? 'Balance Credit' : 'Payment Sent'}</span>
+              <span className="text-amber-400 animate-pulse font-bold">
+                {isDeposit ? '🔄 নোড অডিটিং' : 'Auditing'}
+              </span>
+              <span className="text-slate-300">
+                {isDeposit ? '⚡ ব্যালেন্স ক্রেডিট' : 'Payment Sent'}
+              </span>
             </div>
           </div>
 
           {/* Compact Ticket Info Grid */}
-          <div className="p-2.5 rounded-xl bg-black/40 border border-slate-800/80 space-y-1.5 text-[11px] mb-2.5">
+          <div className="p-2.5 rounded-xl bg-black/50 border border-slate-800 space-y-1.5 text-[11px] mb-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Reference:</span>
+              <span className="text-slate-400">Reference / Order ID:</span>
               <div className="flex items-center gap-1">
                 <span className="font-mono font-bold text-amber-400">{data.id}</span>
                 <button
@@ -180,7 +194,7 @@ export const TransactionWaitConfirmationModal: React.FC<Props> = ({
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">{isDeposit ? 'Deposit Amount:' : 'Payout Amount:'}</span>
+              <span className="text-slate-400">{isDeposit ? 'মূল ডিপোজিট (Deposit Amount):' : 'Payout Amount:'}</span>
               <span className="font-mono font-bold text-white text-xs sm:text-sm">
                 ${data.amount.toFixed(2)} USD
               </span>
@@ -188,34 +202,25 @@ export const TransactionWaitConfirmationModal: React.FC<Props> = ({
 
             {data.bonusAmount && data.bonusAmount > 0 ? (
               <div className="flex items-center justify-between text-emerald-400">
-                <span>Trading Bonus:</span>
-                <span className="font-mono font-bold">+${data.bonusAmount.toFixed(2)} USD (Trade Only)</span>
+                <span className="font-medium">ট্রেডিং বোনাস (Margin Only):</span>
+                <span className="font-mono font-bold">+${data.bonusAmount.toFixed(2)} USD</span>
               </div>
             ) : null}
 
             {data.totalCredited && data.totalCredited > data.amount ? (
-              <div className="flex items-center justify-between text-amber-300 font-semibold">
-                <span>Total Trading Margin:</span>
-                <span className="font-mono font-bold">${data.totalCredited.toFixed(2)} USD</span>
+              <div className="flex items-center justify-between text-amber-300 font-semibold border-t border-slate-800/80 pt-1">
+                <span>সর্বমোট ট্রেডিং ব্যালেন্স (Total Margin):</span>
+                <span className="font-mono font-bold text-sm text-[#F0B90B]">${data.totalCredited.toFixed(2)} USD</span>
               </div>
             ) : null}
 
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">{isDeposit ? 'Sender UID:' : 'Receiver UID:'}</span>
+              <span className="text-slate-400">{isDeposit ? 'প্রেরক (Sender UID):' : 'Receiver UID:'}</span>
               <span className="font-mono text-slate-200">{data.binanceId}</span>
             </div>
           </div>
 
-          {/* Compact Note & Action Button */}
-          <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-200/90 flex items-center gap-1.5 mb-3">
-            <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
-            <span>
-              {isDeposit
-                ? 'Your Real Balance auto-credits in the background as soon as verified.'
-                : 'Payout will be transmitted directly to your Binance Pay account.'}
-            </span>
-          </div>
-
+          {/* Action Button */}
           <button
             id="confirm-modal-ok-btn"
             onClick={() => {
@@ -224,7 +229,7 @@ export const TransactionWaitConfirmationModal: React.FC<Props> = ({
             }}
             className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-[#F0B90B] to-yellow-400 hover:from-amber-400 hover:to-yellow-300 active:scale-[0.98] text-slate-950 font-black text-xs sm:text-sm transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
           >
-            <span>Back to Trading Terminal</span>
+            <span>ট্রেডিং টার্মিনালে ফিরে যান (Back to Terminal)</span>
             <ArrowRight className="w-3.5 h-3.5 stroke-[3]" />
           </button>
         </motion.div>
