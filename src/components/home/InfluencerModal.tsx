@@ -97,14 +97,17 @@ export const InfluencerModal: React.FC<InfluencerModalProps> = ({
   ];
 
   useEffect(() => {
-    const unsub = influencerService.subscribe(() => {
+    const handleSync = () => {
       const session = influencerService.getCurrentSession();
-      setCurrentInfluencer(session);
+      setCurrentInfluencer(session ? { ...session } : null);
       if (session) {
         setDepositLogs(influencerService.getDepositLogsForInfluencer(session.id));
         setWithdrawals(influencerService.getWithdrawalsForInfluencer(session.id));
       }
-    });
+    };
+
+    const unsub = influencerService.subscribe(handleSync);
+    window.addEventListener('cb_influencer_withdrawals_updated', handleSync);
 
     const session = influencerService.getCurrentSession();
     if (session) {
@@ -120,6 +123,7 @@ export const InfluencerModal: React.FC<InfluencerModalProps> = ({
 
     return () => {
       unsub();
+      window.removeEventListener('cb_influencer_withdrawals_updated', handleSync);
     };
   }, [initialTab]);
 
@@ -261,6 +265,13 @@ export const InfluencerModal: React.FC<InfluencerModalProps> = ({
       sound.playWin();
       setWithdrawSuccess(res.message);
       setWithdrawAmount(60);
+      if (res.withdrawal) {
+        setWithdrawals((prev) => [res.withdrawal!, ...prev.filter(w => w.id !== res.withdrawal!.id)]);
+      }
+      const updatedSession = influencerService.getCurrentSession();
+      if (updatedSession) {
+        setCurrentInfluencer({ ...updatedSession });
+      }
       setTimeout(() => {
         setIsWithdrawOpen(false);
         setWithdrawSuccess(null);

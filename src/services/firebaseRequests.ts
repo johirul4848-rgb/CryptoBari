@@ -895,5 +895,188 @@ export async function saveUserToFirebase(user: any): Promise<boolean> {
   }
 }
 
+/**
+ * Record an influencer withdrawal request to Firestore 'influencer_withdrawals'
+ * and sync across local storage and broadcast events for the Admin Panel
+ */
+export async function recordInfluencerWithdrawalToFirebase(data: {
+  id: string;
+  influencerId: string;
+  influencerName?: string;
+  userId?: string;
+  binanceId: string;
+  amount: number;
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt?: number | string;
+}): Promise<boolean> {
+  try {
+    const cleanId = String(data.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'influencer_withdrawals', cleanId);
+
+    const payload = {
+      id: data.id,
+      influencerId: data.influencerId,
+      influencerName: data.influencerName || 'Influencer Partner',
+      userId: data.userId || data.influencerId,
+      binanceId: data.binanceId.trim(),
+      amount: Number(data.amount) || 0,
+      status: data.status || 'PENDING',
+      createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now(),
+      createdAtIso: new Date(typeof data.createdAt === 'number' ? data.createdAt : Date.now()).toISOString(),
+      updatedAt: new Date().toISOString(),
+      storageProvider: 'FIRESTORE',
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+
+    // Sync to shared storage keys so all tabs & admin view update synchronously
+    try {
+      const keys = ['cb_admin_shared_influencer_withdrawals', 'cb_influencer_withdrawals_v1'];
+      keys.forEach((key) => {
+        const raw = localStorage.getItem(key);
+        const list = raw ? JSON.parse(raw) : [];
+        const filtered = Array.isArray(list) ? list.filter((x: any) => x.id !== payload.id) : [];
+        filtered.unshift(payload);
+        localStorage.setItem(key, JSON.stringify(filtered.slice(0, 100)));
+      });
+      window.dispatchEvent(new CustomEvent('cb_influencer_withdrawals_updated', { detail: payload }));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `influencer_withdrawals/${data.id}`);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to real-time influencer withdrawal requests in Firestore
+ */
+export function subscribeInfluencerWithdrawalsFromFirebase(
+  onUpdate: (withdrawals: any[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'influencer_withdrawals');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        list.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+        onUpdate(list);
+      },
+      (error) => {
+        console.warn('Realtime influencer withdrawals subscription notice:', error.message);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * Fetch all influencer withdrawal requests from Firestore
+ */
+export async function fetchInfluencerWithdrawalsFromFirebase(): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'influencer_withdrawals');
+    const snap = await getDocs(colRef);
+    const list: any[] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return list.sort((a: any, b: any) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'influencer_withdrawals');
+    return [];
+  }
+}
+
+/**
+ * Approve influencer withdrawal request in Firestore
+ */
+export async function approveInfluencerWithdrawalInFirebase(id: string): Promise<boolean> {
+  try {
+    const cleanId = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'influencer_withdrawals', cleanId);
+    const now = Date.now();
+    await updateDoc(docRef, {
+      status: 'APPROVED',
+      processedAt: now,
+      updatedAt: new Date().toISOString(),
+    }).catch(async () => {
+      await setDoc(docRef, { id, status: 'APPROVED', processedAt: now }, { merge: true });
+    });
+
+    try {
+      const keys = ['cb_admin_shared_influencer_withdrawals', 'cb_influencer_withdrawals_v1'];
+      keys.forEach((key) => {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const updated = list.map((item: any) =>
+              item.id === id ? { ...item, status: 'APPROVED', processedAt: now } : item
+            );
+            localStorage.setItem(key, JSON.stringify(updated));
+          }
+        }
+      });
+      window.dispatchEvent(new CustomEvent('cb_influencer_withdrawals_updated', { detail: { id, status: 'APPROVED' } }));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `influencer_withdrawals/${id}`);
+    return false;
+  }
+}
+
+/**
+ * Reject influencer withdrawal request in Firestore
+ */
+export async function rejectInfluencerWithdrawalInFirebase(id: string, reason?: string): Promise<boolean> {
+  try {
+    const cleanId = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+    const docRef = doc(db, 'influencer_withdrawals', cleanId);
+    const now = Date.now();
+    await updateDoc(docRef, {
+      status: 'REJECTED',
+      rejectedReason: reason || 'Binance Pay ID unverified or compliance check',
+      processedAt: now,
+      updatedAt: new Date().toISOString(),
+    }).catch(async () => {
+      await setDoc(docRef, {
+        id,
+        status: 'REJECTED',
+        rejectedReason: reason || 'Binance Pay ID unverified or compliance check',
+        processedAt: now,
+      }, { merge: true });
+    });
+
+    try {
+      const keys = ['cb_admin_shared_influencer_withdrawals', 'cb_influencer_withdrawals_v1'];
+      keys.forEach((key) => {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const updated = list.map((item: any) =>
+              item.id === id ? { ...item, status: 'REJECTED', rejectedReason: reason, processedAt: now } : item
+            );
+            localStorage.setItem(key, JSON.stringify(updated));
+          }
+        }
+      });
+      window.dispatchEvent(new CustomEvent('cb_influencer_withdrawals_updated', { detail: { id, status: 'REJECTED', reason } }));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `influencer_withdrawals/${id}`);
+    return false;
+  }
+}
+
+
 
 

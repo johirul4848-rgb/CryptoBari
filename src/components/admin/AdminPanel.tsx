@@ -64,6 +64,10 @@ import {
   saveBinanceGatewaySettingsToFirebase,
   fetchBinanceGatewaySettingsFromFirebase,
   subscribeBinanceGatewaySettingsFromFirebase,
+  fetchInfluencerWithdrawalsFromFirebase,
+  subscribeInfluencerWithdrawalsFromFirebase,
+  approveInfluencerWithdrawalInFirebase,
+  rejectInfluencerWithdrawalInFirebase,
 } from '../../services/firebaseRequests';
 import {
   influencerService,
@@ -259,6 +263,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fbNotices,
         fbGateway,
         fbSupportTickets,
+        fbInfWiths,
       ] = await Promise.all([
         fetch('/api/admin/deposits').then(r => r.json()).catch(() => []),
         fetch('/api/admin/withdrawals').then(r => r.json()).catch(() => []),
@@ -277,6 +282,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         fetchNoticesFromFirebase().catch(() => []),
         fetchBinanceGatewaySettingsFromFirebase().catch(() => null),
         fetchSupportTicketsFromFirebase().catch(() => []),
+        fetchInfluencerWithdrawalsFromFirebase().catch(() => []),
       ]);
 
       // Merge backend deposits with localStorage and Firebase Firestore submissions
@@ -336,14 +342,70 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setInfluencers(localInfs);
       }
 
-      // Load influencer withdrawals
+      // Load & robustly merge influencer withdrawals (Firebase + Local Storage + Server API)
+      const infWithMap = new Map<string, InfluencerWithdrawalRequest>();
+
+      // 1. Local service
       const localInfWiths = influencerService.getAllWithdrawals();
-      const serverInfWiths = infRes && Array.isArray(infRes.withdrawals) ? infRes.withdrawals : (Array.isArray(infWithRes) ? infWithRes : []);
-      if (serverInfWiths.length > 0) {
-        setInfluencerWithdrawals(serverInfWiths);
-      } else {
-        setInfluencerWithdrawals(localInfWiths);
+      if (Array.isArray(localInfWiths)) {
+        localInfWiths.forEach((w) => {
+          if (w && w.id) infWithMap.set(w.id, w);
+        });
       }
+
+      // 2. Shared local storage
+      try {
+        const rawSharedInf = localStorage.getItem('cb_admin_shared_influencer_withdrawals');
+        if (rawSharedInf) {
+          const parsed = JSON.parse(rawSharedInf);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((w: any) => {
+              if (w && w.id) {
+                const existing = infWithMap.get(w.id);
+                infWithMap.set(w.id, { ...existing, ...w });
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // 3. Server backend withdrawals
+      const serverInfWiths = infRes && Array.isArray(infRes.withdrawals)
+        ? infRes.withdrawals
+        : (Array.isArray(infWithRes) ? infWithRes : []);
+      if (Array.isArray(serverInfWiths)) {
+        serverInfWiths.forEach((w: any) => {
+          if (w && w.id) {
+            const existing = infWithMap.get(w.id);
+            infWithMap.set(w.id, { ...existing, ...w });
+          }
+        });
+      }
+
+      // 4. Firebase Firestore withdrawals
+      if (Array.isArray(fbInfWiths) && fbInfWiths.length > 0) {
+        fbInfWiths.forEach((fw: any) => {
+          if (fw && fw.id) {
+            const existing = infWithMap.get(fw.id);
+            infWithMap.set(fw.id, {
+              id: fw.id,
+              influencerId: fw.influencerId || existing?.influencerId || 'INF-UNKNOWN',
+              influencerName: fw.influencerName || existing?.influencerName || 'Influencer Partner',
+              userId: fw.userId || existing?.userId || fw.influencerId,
+              binanceId: fw.binanceId || existing?.binanceId || '',
+              amount: Number(fw.amount) || existing?.amount || 0,
+              status: fw.status || existing?.status || 'PENDING',
+              createdAt: typeof fw.createdAt === 'number' ? fw.createdAt : (existing?.createdAt || Date.now()),
+              processedAt: fw.processedAt || existing?.processedAt,
+              rejectedReason: fw.rejectedReason || existing?.rejectedReason,
+            });
+          }
+        });
+      }
+
+      const mergedInfluencerWithdrawals = Array.from(infWithMap.values())
+        .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+      setInfluencerWithdrawals(mergedInfluencerWithdrawals);
 
       // Robustly merge backend withdrawals with any locally submitted withdrawals and Firebase
       let combinedWithdrawals: WithdrawalItem[] = Array.isArray(withRes) ? [...withRes] : [];
@@ -685,9 +747,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }
     });
 
+    const unsubFbInfWithdrawals = subscribeInfluencerWithdrawalsFromFirebase((fireInfWiths) => {
+      if (Array.isArray(fireInfWiths)) {
+        loadAdminData();
+      }
+    });
+
     window.addEventListener('cb_deposits_updated', handleDataUpdated);
     window.addEventListener('cb_withdrawals_updated', handleDataUpdated);
     window.addEventListener('cb_notices_updated', handleDataUpdated);
+    window.addEventListener('cb_influencer_withdrawals_updated', handleDataUpdated);
     window.addEventListener('storage', handleDataUpdated);
 
     // Periodic safety poll every 8 seconds as well
@@ -701,12 +770,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       unsubFbDeposits();
       unsubFbWithdrawals();
       unsubFbInfluencers();
+      unsubFbInfWithdrawals();
       unsubFbNotices();
       unsubFbSupport();
       clearInterval(interval);
       window.removeEventListener('cb_deposits_updated', handleDataUpdated);
       window.removeEventListener('cb_withdrawals_updated', handleDataUpdated);
       window.removeEventListener('cb_notices_updated', handleDataUpdated);
+      window.removeEventListener('cb_influencer_withdrawals_updated', handleDataUpdated);
       window.removeEventListener('storage', handleDataUpdated);
     };
   }, []);
@@ -1039,9 +1110,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       await fetch(`/api/admin/influencer-withdrawals/${id}/approve`, { method: 'POST' });
     } catch {}
+    await approveInfluencerWithdrawalInFirebase(id).catch(() => {});
     influencerService.adminApproveWithdrawal(id);
     sound.playWin();
     showNotification(`Influencer withdrawal #${id} approved! Marked as Paid via Binance Pay.`);
+    setInfluencerWithdrawals((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, status: 'APPROVED', processedAt: Date.now() } : w))
+    );
     loadAdminData();
   };
 
@@ -1055,9 +1130,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         body: JSON.stringify({ reason }),
       });
     } catch {}
+    await rejectInfluencerWithdrawalInFirebase(id, reason).catch(() => {});
     influencerService.adminRejectWithdrawal(id, reason);
     sound.playLoss();
     showNotification(`Influencer withdrawal #${id} rejected and balance refunded.`);
+    setInfluencerWithdrawals((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, status: 'REJECTED', rejectedReason: reason, processedAt: Date.now() } : w))
+    );
     loadAdminData();
   };
 

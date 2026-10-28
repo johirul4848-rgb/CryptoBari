@@ -54,6 +54,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Influencer Commission Withdrawal Requests
+    match /influencer_withdrawals/{requestId} {
+      allow read, write: if true;
+    }
+
     match /promo_codes/{code} {
       allow read, write: if true;
     }
@@ -79,6 +84,11 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
       allow update: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // Connection validation document
+    match /test/{docId} {
+      allow read: if true;
     }
   }
 }

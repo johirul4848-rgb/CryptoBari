@@ -1,4 +1,11 @@
-import { saveInfluencerToFirebase, subscribeInfluencersFromFirebase } from './firebaseRequests';
+import {
+  saveInfluencerToFirebase,
+  subscribeInfluencersFromFirebase,
+  recordInfluencerWithdrawalToFirebase,
+  subscribeInfluencerWithdrawalsFromFirebase,
+  approveInfluencerWithdrawalInFirebase,
+  rejectInfluencerWithdrawalInFirebase,
+} from './firebaseRequests';
 
 // Influencer Promotion Program Service
 // Handles influencer accounts, commission logic (20% per deposit),
@@ -210,7 +217,7 @@ class InfluencerService {
   }
 
   private initRealtimeSync() {
-    // 1. Subscribe to Firestore in real-time
+    // 1. Subscribe to Firestore influencers in real-time
     try {
       subscribeInfluencersFromFirebase((remoteList) => {
         if (Array.isArray(remoteList) && remoteList.length > 0) {
@@ -232,7 +239,43 @@ class InfluencerService {
       });
     } catch {}
 
-    // 2. Fetch from backend API
+    // 2. Subscribe to Firestore influencer withdrawals in real-time
+    try {
+      subscribeInfluencerWithdrawalsFromFirebase((remoteWiths) => {
+        if (Array.isArray(remoteWiths) && remoteWiths.length > 0) {
+          let updated = false;
+          for (const rw of remoteWiths) {
+            const idx = this.withdrawalRequests.findIndex((w) => w.id === rw.id);
+            if (idx >= 0) {
+              if (this.withdrawalRequests[idx].status !== rw.status || !this.withdrawalRequests[idx].processedAt) {
+                this.withdrawalRequests[idx] = { ...this.withdrawalRequests[idx], ...rw };
+                updated = true;
+              }
+            } else {
+              this.withdrawalRequests.unshift({
+                id: rw.id,
+                influencerId: rw.influencerId,
+                influencerName: rw.influencerName || 'Influencer Partner',
+                userId: rw.userId || rw.influencerId,
+                binanceId: rw.binanceId,
+                amount: Number(rw.amount) || 0,
+                status: rw.status || 'PENDING',
+                createdAt: typeof rw.createdAt === 'number' ? rw.createdAt : new Date(rw.createdAt || Date.now()).getTime(),
+                processedAt: rw.processedAt,
+                rejectedReason: rw.rejectedReason,
+              });
+              updated = true;
+            }
+          }
+          if (updated) {
+            localStorage.setItem(STORAGE_KEY_WITHDRAWALS, JSON.stringify(this.withdrawalRequests));
+            this.notify();
+          }
+        }
+      });
+    } catch {}
+
+    // 3. Fetch from backend API
     try {
       fetch('/api/admin/influencers')
         .then((r) => r.json())
@@ -255,6 +298,31 @@ class InfluencerService {
           }
         })
         .catch(() => {});
+
+      fetch('/api/admin/influencer-withdrawals')
+        .then((r) => r.json())
+        .then((srvWiths) => {
+          if (Array.isArray(srvWiths) && srvWiths.length > 0) {
+            let updated = false;
+            for (const sw of srvWiths) {
+              const idx = this.withdrawalRequests.findIndex((w) => w.id === sw.id);
+              if (idx >= 0) {
+                if (this.withdrawalRequests[idx].status !== sw.status) {
+                  this.withdrawalRequests[idx] = { ...this.withdrawalRequests[idx], ...sw };
+                  updated = true;
+                }
+              } else {
+                this.withdrawalRequests.unshift(sw);
+                updated = true;
+              }
+            }
+            if (updated) {
+              localStorage.setItem(STORAGE_KEY_WITHDRAWALS, JSON.stringify(this.withdrawalRequests));
+              this.notify();
+            }
+          }
+        })
+        .catch(() => {});
     } catch {}
   }
 
@@ -270,6 +338,10 @@ class InfluencerService {
 
   private saveWithdrawals() {
     localStorage.setItem(STORAGE_KEY_WITHDRAWALS, JSON.stringify(this.withdrawalRequests));
+    try {
+      localStorage.setItem('cb_admin_shared_influencer_withdrawals', JSON.stringify(this.withdrawalRequests));
+      window.dispatchEvent(new CustomEvent('cb_influencer_withdrawals_updated', { detail: this.withdrawalRequests }));
+    } catch {}
     this.notify();
   }
 
@@ -815,17 +887,32 @@ class InfluencerService {
     this.saveInfluencers();
     this.saveWithdrawals();
 
-    // Async sync with server
+    // 1. Sync to Firebase Firestore
+    recordInfluencerWithdrawalToFirebase(newWithdrawal).catch((err) => {
+      console.warn('Firebase influencer withdrawal record warning:', err);
+    });
+
+    // 2. Sync with server backend
     try {
       fetch('/api/influencer/withdraw-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: newWithdrawal.id,
           influencerId,
+          influencerName: influencer.name,
+          userId: influencer.userId,
           amount,
           binanceId: binanceId.trim(),
         }),
       }).catch(() => {});
+    } catch {}
+
+    // 3. Broadcast cross-tab and cross-component update event
+    try {
+      window.dispatchEvent(
+        new CustomEvent('cb_influencer_withdrawals_updated', { detail: newWithdrawal })
+      );
     } catch {}
 
     return {
@@ -844,6 +931,13 @@ class InfluencerService {
     w.status = 'APPROVED';
     w.processedAt = Date.now();
     this.saveWithdrawals();
+
+    // Sync to Firestore & backend
+    approveInfluencerWithdrawalInFirebase(id).catch(() => {});
+    try {
+      fetch(`/api/admin/influencer-withdrawals/${id}/approve`, { method: 'POST' }).catch(() => {});
+    } catch {}
+
     return { success: true, message: `Influencer withdrawal of $${w.amount.toFixed(2)} marked as Paid.` };
   }
 
@@ -853,9 +947,10 @@ class InfluencerService {
     if (!w) return { success: false, message: 'Withdrawal request not found.' };
     if (w.status !== 'PENDING') return { success: false, message: 'Request is already processed.' };
 
+    const rejReason = reason || 'Binance Pay ID invalid or compliance review.';
     w.status = 'REJECTED';
     w.processedAt = Date.now();
-    w.rejectedReason = reason || 'Binance Pay ID invalid or compliance review.';
+    w.rejectedReason = rejReason;
 
     // Refund to influencer balance
     const inf = this.influencers.find((i) => i.id === w.influencerId);
@@ -866,6 +961,17 @@ class InfluencerService {
     }
 
     this.saveWithdrawals();
+
+    // Sync to Firestore & backend
+    rejectInfluencerWithdrawalInFirebase(id, rejReason).catch(() => {});
+    try {
+      fetch(`/api/admin/influencer-withdrawals/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: rejReason }),
+      }).catch(() => {});
+    } catch {}
+
     return { success: true, message: `Withdrawal rejected and refunded $${w.amount.toFixed(2)} to influencer.` };
   }
 

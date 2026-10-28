@@ -127,6 +127,24 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "userId", "subject", "status", "createdAt"]
+    },
+    "InfluencerWithdrawal": {
+      "title": "InfluencerWithdrawal",
+      "description": "Withdrawal payout requests submitted by influencers for commission earnings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "influencerId": { "type": "string", "maxLength": 128 },
+        "influencerName": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "binanceId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "createdAt": { "type": "string" },
+        "processedAt": { "type": "string" },
+        "rejectedReason": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["id", "influencerId", "amount", "binanceId", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -153,6 +171,10 @@
     "/influencers/{influencerId}": {
       "schema": "InfluencerProfile",
       "description": "Influencer and referral partner profiles with promo codes"
+    },
+    "/influencer_withdrawals/{requestId}": {
+      "schema": "InfluencerWithdrawal",
+      "description": "Commission withdrawal requests submitted by influencers"
     },
     "/support_tickets/{ticketId}": {
       "schema": "SupportTicket",
